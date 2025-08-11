@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>⚽ Chat with Mike</title>
+  <style>
+    :root{
+      --bg:#e5ddd5;
+      --panel:#fff;
+      --header:#075e54;
+      --header-2:#0b7c6c;
+      --me:#dcf8c6;
+      --mike:#fff;
+      --muted:#667781;
+    }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      background:var(--bg);
+      display:flex;justify-content:center;align-items:center;
+      min-height:100vh;font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    }
+    .chat{
+      width:100%;max-width:520px;height:96vh;max-height:920px;
+      background:var(--panel);display:flex;flex-direction:column;
+      border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.15);overflow:hidden;
+    }
+    .header{
+      background:linear-gradient(90deg,var(--header),#128c7e);
+      color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px;
+    }
+    .header img{width:36px;height:36px;border-radius:50%}
+    .header .title{font-weight:700}
+    .header .sub{font-size:.85rem;opacity:.9}
+
+    .box{
+      flex:1;padding:12px;overflow-y:auto;background:#ece5dd;
+      background-image:url('https://i.imgur.com/5JQmQh1.png');
+      background-size:300px;
+    }
+    .row{display:flex;margin:10px 0}
+    .bubble{
+      max-width:78%;padding:10px 12px;border-radius:14px;line-height:1.45;
+      word-wrap:break-word;position:relative;font-size:.98rem;
+      box-shadow:0 1px 0 rgba(0,0,0,.05);animation:pop .12s ease-out;
+    }
+    .left{justify-content:flex-start}
+    .left .bubble{background:var(--mike);border-bottom-left-radius:4px}
+    .left .bubble::after{
+      content:"";position:absolute;left:-6px;bottom:0;border-width:6px 6px 0 0;border-style:solid;
+      border-color:var(--mike) transparent transparent transparent;filter:drop-shadow(0 1px 0 rgba(0,0,0,.05));
+    }
+    .right{justify-content:flex-end}
+    .right .bubble{background:var(--me);border-bottom-right-radius:4px}
+    .right .bubble::after{
+      content:"";position:absolute;right:-6px;bottom:0;border-width:6px 0 0 6px;border-style:solid;
+      border-color:var(--me) transparent transparent var(--me);filter:drop-shadow(0 1px 0 rgba(0,0,0,.05));
+    }
+    .meta{display:block;margin-top:6px;font-size:.75rem;color:var(--muted)}
+
+    .inputbar{
+      border-top:1px solid #d1d7db;background:#f0f2f5;padding:10px;display:flex;gap:8px;align-items:center;
+    }
+    form{display:flex;gap:8px;align-items:center;width:100%}
+    .field{
+      flex:1;display:flex;align-items:center;background:#fff;border-radius:22px;padding:8px 12px;
+      border:1px solid #e3e6ea;
+    }
+    .field input{
+      width:100%;border:0;outline:0;background:transparent;font-size:1rem;
+    }
+    .send{
+      border:0;border-radius:22px;background:var(--header);color:#fff;
+      padding:10px 16px;font-weight:600;cursor:pointer;transition:background .2s ease;
+    }
+    .send[disabled]{opacity:.6;cursor:default}
+    .send:hover{background:var(--header-2)}
+    .typing{font-style:italic;color:#3b4a54;font-size:.95rem;opacity:.9}
+
+    @media (max-width:600px){.chat{height:100vh;border-radius:0}}
+    @keyframes pop{from{transform:scale(.98);opacity:0}to{transform:scale(1);opacity:1}}
+        .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px;
+        background: #f5f7fa;
+        border-bottom: 1px solid #ddd;
+        }
+        .qa-btn {
+        flex: 1 1 auto;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+        }
+        .qa-btn:hover {
+        transform: translateY(-2px);
+        opacity: 0.9;
+        }
+        .qa-btn.blue { background: #3b82f6; }
+        .qa-btn.orange { background: #f97316; }
+        .qa-btn.purple { background: #8b5cf6; }
+        .qa-btn.teal { background: #14b8a6; }
+  </style>
+</head>
+<body>
+  <div class="chat">
+    <div class="header">
+      <img src="https://cdn-icons-png.flaticon.com/512/4712/4712107.png" alt="Mike"/>
+      <div>
+        <div class="title">⚽ Mike — Football AI</div>
+        <div class="sub">Always includes confidence %</div>
+      </div>
+    </div>
+
+    <div id="box" class="box" aria-live="polite">
+      <div class="row left">
+        <div class="bubble">
+          <strong>Mike</strong><br/>
+          Hi! I’m Mike. Ask for EPL fixtures this weekend, or type “Chelsea vs Aston Villa prediction”.
+          <span class="meta">now</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inside the chat container, just ABOVE the .inputbar div -->
+    <div class="quick-actions">
+    <button class="qa-btn blue" data-msg="Show EPL fixtures this weekend">⚽ EPL Fixtures</button>
+    <button class="qa-btn orange" data-msg="Give me best bets this weekend">🎯 Best Bets</button>
+    <button class="qa-btn purple" data-msg="Give me latest sports news">📰 Sports News</button>
+    <button class="qa-btn teal" data-msg="Give me another random betting pick">🎲 Random Pick</button>
+    </div>
+
+    <div class="inputbar">
+      <form id="chatForm" autocomplete="off">
+        <div class="field">
+          <input id="msg" type="text" placeholder="Type a message… (Enter to send, Shift+Enter for newline)" />
+        </div>
+        <button id="sendBtn" class="send" type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const box = document.getElementById('box');
+    const form = document.getElementById('chatForm');
+    const input = document.getElementById('msg');
+    const sendBtn = document.getElementById('sendBtn');
+
+    function timeNow(){
+      const d = new Date();
+      return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+    function escapeHTML(str){
+      return str
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
+    }
+    function addBubble(side, sender, text){
+      const row = document.createElement('div');
+      row.className = `row ${side}`;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = `<strong>${escapeHTML(sender)}</strong><br>${escapeHTML(text).replace(/\n/g,'<br>')}<span class="meta">${timeNow()}</span>`;
+      row.appendChild(bubble);
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+    function addTyping(){
+      const row = document.createElement('div');
+      row.className = 'row left';
+      row.id = 'typingRow';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble typing';
+      bubble.textContent = 'Mike is typing…';
+      row.appendChild(bubble);
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+    function rmTyping(){
+      const row = document.getElementById('typingRow');
+      if(row) row.remove();
+    }
+
+    // Parse "Team A vs Team B" PLUS "and", "&", comma, dash
+    function parseTeams(message){
+      const m = message.match(/^\s*(.+?)\s*(?:vs\.?|v|against|and|&|,|-\s*)\s*(.+?)\s*$/i);
+      if(!m) return null;
+      const team1 = m[1].trim();
+      const team2 = m[2].trim();
+      if(team1.length < 2 || team2.length < 2) return null;
+      return {team1, team2};
+    }
+
+    // ENTER to send; Shift+Enter = newline
+    input.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const message = input.value.trim();
+      if(!message) return;
+
+      addBubble('right','You',message);
+      input.value = '';
+      input.focus();
+      sendBtn.disabled = true;
+
+      const teams = parseTeams(message);
+      const payload = teams
+        ? { question: message, team1: teams.team1, team2: teams.team2 }
+        : { question: message };
+
+      addTyping();
+
+      try{
+        const res = await fetch('/ask/',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        rmTyping();
+        sendBtn.disabled = false;
+
+        if(data.response){
+          addBubble('left','Mike', data.response);
+        }else if(data.error){
+          addBubble('left','Mike', `⚠️ ${data.error}`);
+        }else{
+          addBubble('left','Mike', '⚠️ Unexpected response. Please try again.');
+        }
+      }catch(err){
+        rmTyping();
+        sendBtn.disabled = false;
+        addBubble('left','Mike','⚠️ Network error. Please try again.');
+      }
+    });
+  </script>
+  <script>
+// Quick action buttons click event
+document.querySelectorAll('.qa-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    input.value = btn.dataset.msg;
+    form.requestSubmit();
+  });
+});
+</script>
+</body>
+</html>
