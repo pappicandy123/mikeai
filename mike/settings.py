@@ -133,3 +133,7 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Allow iframing from the same origin (127.0.0.1:8000 in dev)
+X_FRAME_OPTIONS = 'SAMEORIGIN'

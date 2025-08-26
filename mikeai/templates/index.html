@@ -6,91 +6,34 @@
 <title>Mike — Chat</title>
 <style>
   :root{
-    --bg:#0f172a;         /* app shell bg (slate-900) */
-    --panel:#111827;      /* left rail bg (gray-900) */
-    --chat:#0b1020;       /* chat panel bg (custom deep) */
-    --card:#111827;       /* cards */
-    --border:#1f2937;     /* borders */
-    --text:#e5e7eb;       /* text (gray-200) */
-    --muted:#9ca3af;      /* muted */
-    --accent:#22c55e;     /* accent (green) */
-    --assistant:#1f2937;  /* assistant bubble */
-    --user:#1a2b4a;       /* user bubble */
+    --bg:#0f172a; --panel:#111827; --chat:#0b1020; --card:#111827; --border:#1f2937;
+    --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --assistant:#1f2937; --user:#1a2b4a;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{
-    background:var(--bg);
-    color:var(--text);
-    font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-  }
+  body{background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial}
 
-  /* ===== App Shell (ChatGPT-like) ===== */
-  .app{
-    display:grid;
-    grid-template-columns: 320px 1fr;
-    min-height:100vh;
-    overflow:hidden;
-  }
-  @media (max-width: 900px){
-    .app{ grid-template-columns: 1fr; }
-  }
+  .app{display:grid;grid-template-columns:320px 1fr;min-height:100vh;overflow:hidden}
+  @media (max-width:900px){.app{grid-template-columns:1fr}}
 
-  /* ===== Left rail (sidebar) ===== */
-  .rail{
-    background:var(--panel);
-    border-right:1px solid var(--border);
-    display:flex;flex-direction:column;min-height:100%;
-  }
-  .rail-header{
-    display:flex;align-items:center;gap:10px;
-    padding:14px 16px;border-bottom:1px solid var(--border);
-  }
+  .rail{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}
+  .rail-header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
   .rail-header .title{font-weight:800;font-size:1.05rem}
   .rail-scroll{flex:1;overflow:auto;padding:10px}
-  .rail .card{
-    background:var(--card);
-    border:1px solid var(--border);
-    border-radius:12px;
-    padding:10px;
-    margin-bottom:10px;
-  }
+  .rail .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px}
   .league-tabs{display:flex;gap:6px;margin-bottom:10px}
-  .tab{
-    font-weight:700;font-size:.85rem;cursor:pointer;
-    padding:6px 10px;border-radius:8px;border:1px solid var(--border);
-    color:var(--muted);background:#0b1020;
-  }
+  .tab{font-weight:700;font-size:.85rem;cursor:pointer;padding:6px 10px;border-radius:8px;border:1px solid var(--border);color:var(--muted);background:#0b1020}
   .tab.active{background:#122033;color:#e5e7eb;border-color:#243244}
-  .standings{
-    width:100%;border-collapse:collapse;font-size:.88rem;
-  }
-  .standings th,.standings td{
-    padding:8px 6px;border-bottom:1px solid var(--border);text-align:right;
-  }
+  .standings{width:100%;border-collapse:collapse;font-size:.88rem}
+  .standings th,.standings td{padding:8px 6px;border-bottom:1px solid var(--border);text-align:right}
   .standings th:first-child,.standings td:first-child{text-align:left}
-  .badge{
-    display:inline-block;min-width:20px;text-align:center;
-    padding:2px 6px;border-radius:8px;background:#0e1726;border:1px solid #253047;color:#9ca3af;font-size:.75rem
-  }
-  .rail-footer{
-    border-top:1px solid var(--border);padding:10px 12px;font-size:.85rem;color:var(--muted)
-  }
+  .badge{display:inline-block;min-width:20px;text-align:center;padding:2px 6px;border-radius:8px;background:#0e1726;border:1px solid #253047;color:#9ca3af;font-size:.75rem}
+  .rail-footer{border-top:1px solid var(--border);padding:10px 12px;font-size:.85rem;color:var(--muted)}
 
-  /* ===== Topbar (mobile) ===== */
-  .topbar{
-    display:none;
-    background:var(--panel);
-    border-bottom:1px solid var(--border);
-    padding:10px 12px;
-    align-items:center;justify-content:space-between;gap:10px;
-  }
+  .topbar{display:none;background:var(--panel);border-bottom:1px solid var(--border);padding:10px 12px;align-items:center;justify-content:space-between;gap:10px}
   .topbar .brand{display:flex;align-items:center;gap:10px}
   .topbar .brand img{width:28px;height:28px;border-radius:8px}
-  .topbar button{
-    background:#0e1726;border:1px solid #223148;color:#d1d5db;border-radius:10px;
-    padding:8px 10px;font-weight:700;cursor:pointer;
-  }
+  .topbar button{background:#0e1726;border:1px solid #223148;color:#d1d5db;border-radius:10px;padding:8px 10px;font-weight:700;cursor:pointer}
   @media (max-width:900px){
     .topbar{display:flex}
     .rail{position:fixed;inset:0 auto 0 0;width:85%;max-width:360px;transform:translateX(-100%);transition:transform .2s ease;z-index:30}
@@ -99,74 +42,49 @@
     .scrim.show{display:block}
   }
 
-  /* ===== Chat area ===== */
-  .chat{
-    display:flex;flex-direction:column;min-height:100vh;background:var(--chat);
-  }
-  .gutter{height:16px}
-  .thread{
-    flex:1;overflow:auto;padding:20px 0;
-    display:flex;justify-content:center;
-  }
-  .thread-inner{
-    width:100%;max-width:900px;padding:0 16px;display:flex;flex-direction:column;gap:14px;
-  }
-  .msg{
-    display:flex;gap:12px;padding:14px;border-bottom:1px solid var(--border);
-  }
-  .avatar{
-    width:32px;height:32px;border-radius:6px;background:#172033;border:1px solid #263247;flex:0 0 auto;
-    display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5b4fc
-  }
+  .chat{display:flex;flex-direction:column;min-height:100vh;background:var(--chat)}
+  .gutter{height:10px}
+
+  .team-jump{position:sticky;top:0;z-index:5;background:linear-gradient(180deg, rgba(11,16,32,.92), rgba(11,16,32,.86));backdrop-filter:blur(2px);display:flex;gap:8px;align-items:center;justify-content:flex-start;padding:10px 16px;border-bottom:1px solid var(--border)}
+  .team-jump label{color:#cbd5e1;font-size:.9rem}
+  .team-jump select{background:#0b1020;border:1px solid #223148;color:#e5e7eb;padding:8px 10px;border-radius:10px;min-width:190px;max-width:60vw}
+  .team-jump button{background:var(--accent);color:#04210f;border:0;padding:8px 12px;font-weight:800;border-radius:10px;cursor:pointer;white-space:nowrap}
+  @media (max-width:520px){.team-jump{flex-wrap:wrap;gap:6px}.team-jump select{min-width:unset;flex:1}}
+
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9998}
+  .modal{position:fixed;inset:4%;background:#0b1020;border:1px solid #223148;border-radius:12px;display:none;z-index:9999;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  .modal header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #223148}
+  .modal header h3{margin:0;font-size:1rem;color:#e5e7eb}
+  .modal .close{background:#ef4444;color:#fff;border:0;border-radius:8px;padding:6px 10px;cursor:pointer}
+  .modal iframe{width:100%;height:calc(100% - 46px);border:0;border-bottom-left-radius:12px;border-bottom-right-radius:12px}
+  @media (max-width:900px){.modal{inset:2%}}
+  @media (max-width:560px){.modal{inset:0}.modal header{padding:8px 10px}.modal .close{padding:6px 10px}}
+
+  .thread{flex:1;overflow:auto;padding:10px 0 20px;display:flex;justify-content:center}
+  .thread-inner{width:100%;max-width:900px;padding:0 16px;display:flex;flex-direction:column;gap:14px}
+  .msg{display:flex;gap:12px;padding:14px;border-bottom:1px solid var(--border)}
+  .avatar{width:32px;height:32px;border-radius:6px;background:#172033;border:1px solid #263247;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5b4fc}
   .msg .content{flex:1 1 auto}
   .content .name{font-weight:700;margin-bottom:6px;color:#e5e7eb}
-  .bubble{
-    background:var(--assistant);
-    border:1px solid var(--border);border-radius:12px;padding:12px;line-height:1.55;
-    color:#e5e7eb;font-size:1rem;
-  }
+  .bubble{background:var(--assistant);border:1px solid var(--border);border-radius:12px;padding:12px;line-height:1.55;color:#e5e7eb;font-size:1rem}
   .me .bubble{background:var(--user)}
   .meta{margin-top:6px;font-size:.8rem;color:#9aa7bd}
   .typing{font-style:italic;color:#cbd5e1}
 
-  /* Quick actions */
-  .chips{
-    display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0 44px;
-  }
-  .chip{
-    background:#0e1726;border:1px solid #223148;color:#d1d5db;
-    padding:6px 10px;border-radius:999px;font-size:.85rem;cursor:pointer
-  }
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0 44px}
+  .chip{background:#0e1726;border:1px solid #223148;color:#d1d5db;padding:6px 10px;border-radius:999px;font-size:.85rem;cursor:pointer}
 
-  /* Composer */
-  .composer{
-    position:sticky;bottom:0;left:0;right:0;
-    display:flex;justify-content:center;background:linear-gradient(180deg, transparent, rgba(0,0,0,.25));
-    padding:12px 10px 18px;
-  }
-  .composer-inner{
-    width:100%;max-width:900px;padding:0 16px;
-  }
-  form{
-    display:flex;gap:10px;background:#0e1726;border:1px solid #223148;border-radius:16px;padding:10px
-  }
-  textarea{
-    flex:1;border:0;outline:0;background:transparent;color:#e5e7eb;font-size:1rem;resize:none;max-height:180px;
-  }
-  .send{
-    background:var(--accent);border:0;border-radius:10px;color:#04210f;font-weight:800;padding:10px 14px;cursor:pointer
-  }
+  .composer{position:sticky;bottom:0;left:0;right:0;display:flex;justify-content:center;background:linear-gradient(180deg, transparent, rgba(0,0,0,.25));padding:12px 10px 18px}
+  .composer-inner{width:100%;max-width:900px;padding:0 16px}
+  form{display:flex;gap:10px;background:#0e1726;border:1px solid #223148;border-radius:16px;padding:10px}
+  textarea{flex:1;border:0;outline:0;background:transparent;color:#e5e7eb;font-size:1rem;resize:none;max-height:180px}
+  .send{background:var(--accent);border:0;border-radius:10px;color:#04210f;font-weight:800;padding:10px 14px;cursor:pointer}
   .send[disabled]{opacity:.6;cursor:not-allowed}
 
-  /* ===== Skeleton shimmer for fast perceived load ===== */
-  .text-shimmer, .logo-shimmer, .badge.shimmer{
-    display:inline-block; height:14px; background:linear-gradient(90deg,#182235 0%,#23314a 50%,#182235 100%);
-    background-size:200% 100%; animation:sh 1.2s linear infinite; border-radius:6px;
-  }
-  .logo-shimmer{ width:18px; height:18px; border-radius:4px; border:1px solid #223148; background:#142139; }
-  .badge.shimmer{ width:28px; height:18px; padding:0; border-radius:8px; border:1px solid #253047; }
-  @keyframes sh{ 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-
+  .text-shimmer,.logo-shimmer,.badge.shimmer{display:inline-block;height:14px;background:linear-gradient(90deg,#182235 0%,#23314a 50%,#182235 100%);background-size:200% 100%;animation:sh 1.2s linear infinite;border-radius:6px}
+  .logo-shimmer{width:18px;height:18px;border-radius:4px;border:1px solid #223148;background:#142139}
+  .badge.shimmer{width:28px;height:18px;padding:0;border-radius:8px;border:1px solid #253047}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
   a{color:#7dd3fc;text-decoration:none}
 </style>
 </head>
@@ -183,7 +101,7 @@
 <div class="scrim" id="scrim"></div>
 
 <div class="app">
-  <!-- LEFT RAIL: EPL & La Liga tables -->
+  <!-- LEFT RAIL -->
   <aside class="rail" id="rail">
     <div class="rail-header">
       <div style="display:flex;align-items:center;gap:10px">
@@ -196,7 +114,6 @@
     </div>
 
     <div class="rail-scroll">
-      <!-- EPL / La Liga card -->
       <div class="card">
         <div class="league-tabs">
           <div class="tab active" id="tab-epl">EPL</div>
@@ -213,7 +130,6 @@
         <div id="table-laliga" style="display:none"></div>
       </div>
 
-      <!-- Helpful quick tips -->
       <div class="card">
         <div style="font-weight:800;margin-bottom:6px">Quick tips</div>
         <ul style="list-style:disc;margin-left:18px;color:#cbd5e1">
@@ -224,17 +140,31 @@
       </div>
     </div>
 
-    <div class="rail-footer">
-     Mike uses real time data .
-    </div>
+    <div class="rail-footer">Mike uses real time data.</div>
   </aside>
 
   <!-- CHAT PANEL -->
   <main class="chat">
+    <div class="team-jump">
+      <label for="teamJump2">Team Panel:</label>
+      <select id="teamJump2"></select>
+      <button id="openTeamBtn">Open in Page</button>
+    </div>
+
     <div class="gutter"></div>
+
+    <!-- Modal -->
+    <div id="tpBackdrop" class="modal-backdrop"></div>
+    <div id="tpModal" class="modal" role="dialog" aria-labelledby="tpTitle" aria-modal="true">
+      <header>
+        <h3 id="tpTitle">Team Panel</h3>
+        <button class="close" id="tpClose">Close</button>
+      </header>
+      <iframe id="tpFrame" src=""></iframe>
+    </div>
+
     <div class="thread" id="thread">
       <div class="thread-inner" id="threadInner">
-        <!-- Welcome message -->
         <div class="msg">
           <div class="avatar">M</div>
           <div class="content">
@@ -243,8 +173,6 @@
               Hi! I’m Mike. Ask for EPL fixtures this weekend, or type “Chelsea vs Aston Villa prediction”. I’ll include odds and confidence.
             </div>
             <div class="meta">now</div>
-
-            <!-- Quick chips -->
             <div class="chips">
               <button class="chip" data-msg="Show EPL fixtures this weekend">⚽ EPL fixtures</button>
               <button class="chip" data-msg="Give me best bets this weekend">🎯 Best bets</button>
@@ -256,63 +184,65 @@
       </div>
     </div>
 
-    <!-- Composer -->
     <div class="composer">
       <div class="composer-inner">
         <form id="chatForm" autocomplete="off">
           <textarea id="msg" rows="1" placeholder="Message Mike… (Shift+Enter for newline)"></textarea>
           <button id="sendBtn" class="send" type="submit">Send</button>
         </form>
-        <div class="hint">Mike may use last match context when you ask follow-ups. Need odds from a specific book? Try “include 1xBet odds”.</div>
+        <div class="hint">Mike may use last match context when you ask follow-ups.</div>
       </div>
     </div>
   </main>
 </div>
 
 <script>
-/* ====== Sidebar toggle (mobile) ====== */
+/* ===== Mobile sidebar ===== */
 const rail = document.getElementById('rail');
 const scrim = document.getElementById('scrim');
-const toggleRailBtn = document.getElementById('toggleRail');
-const openRail = () => { rail.classList.add('open'); scrim.classList.add('show'); };
-const closeRail = () => { rail.classList.remove('open'); scrim.classList.remove('show'); };
-toggleRailBtn?.addEventListener('click', openRail);
-scrim?.addEventListener('click', closeRail);
+document.getElementById('toggleRail')?.addEventListener('click', ()=>{ rail.classList.add('open'); scrim.classList.add('show'); });
+scrim?.addEventListener('click', ()=>{ rail.classList.remove('open'); scrim.classList.remove('show'); });
 
-/* ====== Tabs for tables ====== */
+/* ===== Tabs & table containers (declare ONCE) ===== */
 const tabEpl = document.getElementById('tab-epl');
 const tabLaLiga = document.getElementById('tab-laliga');
 const tableEpl = document.getElementById('table-epl');
 const tableLaLiga = document.getElementById('table-laliga');
+
 tabEpl.addEventListener('click', ()=>{ tabEpl.classList.add('active'); tabLaLiga.classList.remove('active'); tableEpl.style.display='block'; tableLaLiga.style.display='none'; });
 tabLaLiga.addEventListener('click', ()=>{ tabLaLiga.classList.add('active'); tabEpl.classList.remove('active'); tableEpl.style.display='none'; tableLaLiga.style.display='block'; });
 
-/* ====== Chat DOM helpers ====== */
+/* ===== Chat helpers ===== */
 const threadInner = document.getElementById('threadInner');
 const form = document.getElementById('chatForm');
 const input = document.getElementById('msg');
 const sendBtn = document.getElementById('sendBtn');
 
-function timeNow(){
-  const d = new Date();
-  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-}
+function timeNow(){ return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
 function esc(s){
-  return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+  s = String(s ?? '');
+  return s
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
 }
+
 function addMessage(role, text){
   const wrap = document.createElement('div');
   wrap.className = 'msg' + (role === 'user' ? ' me' : '');
   wrap.innerHTML = `
-    <div class="avatar">${role==='user'?'Y':'M'}</div>
+    <div class="avatar">${role === 'user' ? 'Y' : 'M'}</div>
     <div class="content">
-      <div class="name">${role==='user'?'You':'Mike'}</div>
+      <div class="name">${role === 'user' ? 'You' : 'Mike'}</div>
       <div class="bubble">${esc(text).replace(/\n/g,'<br>')}</div>
       <div class="meta">${timeNow()}</div>
     </div>`;
   threadInner.appendChild(wrap);
   threadInner.parentElement.scrollTop = threadInner.parentElement.scrollHeight;
 }
+
 let typingEl = null;
 function showTyping(){
   if(typingEl) return;
@@ -328,164 +258,148 @@ function showTyping(){
   threadInner.appendChild(typingEl);
   threadInner.parentElement.scrollTop = threadInner.parentElement.scrollHeight;
 }
-function hideTyping(){
-  if(typingEl){ typingEl.remove(); typingEl = null; }
-}
+function hideTyping(){ if(typingEl){ typingEl.remove(); typingEl=null; } }
 
-/* ====== Send flow ====== */
 function parseTeams(message){
   const m = message.match(/^\s*(.+?)\s*(?:vs\.?|v|versus|against|and|&|,|-\s*)\s*(.+?)\s*$/i);
   if(!m) return null;
   const team1 = m[1].trim(); const team2 = m[2].trim();
-  if(team1.length < 2 || team2.length < 2) return null;
+  if(team1.length<2||team2.length<2) return null;
   return {team1, team2};
 }
-input.addEventListener('keydown', (e)=>{
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault(); form.requestSubmit();
-  }
-});
+input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
 
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
   const message = input.value.trim();
   if(!message) return;
   addMessage('user', message);
-  input.value = ''; input.style.height='auto'; sendBtn.disabled = true; showTyping();
-
+  input.value=''; input.style.height='auto'; sendBtn.disabled=true; showTyping();
   const teams = parseTeams(message);
-  const payload = teams ? {question: message, team1: teams.team1, team2: teams.team2} : {question: message};
-
+  const payload = teams ? {question:message, team1:teams.team1, team2:teams.team2} : {question:message};
   try{
-    const res = await fetch('/ask/', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const res = await fetch('/ask/', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
     const data = await res.json();
-    hideTyping(); sendBtn.disabled = false;
-    if(data.response){ addMessage('assistant', data.response); }
-    else if(data.error){ addMessage('assistant', `⚠️ ${data.error}`); }
-    else { addMessage('assistant', '⚠️ Unexpected response.'); }
-  }catch(err){
-    hideTyping(); sendBtn.disabled = false;
+    hideTyping(); sendBtn.disabled=false;
+    if(data.response) addMessage('assistant', data.response);
+    else if(data.error) addMessage('assistant', `⚠️ ${data.error}`);
+    else addMessage('assistant','⚠️ Unexpected response.');
+  }catch(_){
+    hideTyping(); sendBtn.disabled=false;
     addMessage('assistant','⚠️ Network error. Please try again.');
   }
 });
 
-/* Autosize textarea */
-const autoSize = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; };
+const autoSize = () => { input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,180)+'px'; };
 input.addEventListener('input', autoSize);
-
-/* Quick chips */
-document.querySelectorAll('.chip').forEach(ch => ch.addEventListener('click', ()=>{
-  input.value = ch.dataset.msg || ch.textContent; autoSize(); form.requestSubmit();
+document.querySelectorAll('.chip').forEach(ch=>ch.addEventListener('click', ()=>{
+  input.value=ch.dataset.msg||ch.textContent; autoSize(); form.requestSubmit();
 }));
 
-/* ====== Standings: fast skeleton + retry/backoff ====== */
-function skeletonTable(rows = 12) {
-  let body = '';
-  for (let i = 0; i < rows; i++) {
-    body += `
-      <tr>
-        <td><span class="badge shimmer">&nbsp;</span></td>
-        <td style="text-align:left">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span class="logo-shimmer"></span>
-            <span class="text-shimmer" style="width:120px"></span>
-          </div>
-        </td>
-        <td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td>
-        <td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td>
-        <td class="text-shimmer"></td>
-        <td style="text-align:left"><span class="text-shimmer" style="width:80px"></span></td>
-      </tr>`;
-  }
-  return `
-    <table class="standings" aria-label="Standings (loading)">
-      <thead><tr>
-        <th style="width:34px">#</th>
-        <th style="text-align:left">Team</th>
-        <th>P</th><th>W</th><th>D</th><th>L</th>
-        <th>GF</th><th>GA</th><th>GD</th><th>Pts</th>
-        <th style="text-align:left">Form</th>
-      </tr></thead>
-      <tbody>${body}</tbody>
-    </table>`;
+/* ===== Standings ===== */
+function skeletonTable(rows=12){
+  let body=''; for(let i=0;i<rows;i++){ body += `
+    <tr>
+      <td><span class="badge shimmer">&nbsp;</span></td>
+      <td style="text-align:left">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="logo-shimmer"></span>
+          <span class="text-shimmer" style="width:120px"></span>
+        </div>
+      </td>
+      <td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td>
+      <td class="text-shimmer"></td><td class="text-shimmer"></td><td class="text-shimmer"></td>
+      <td class="text-shimmer"></td>
+      <td style="text-align:left"><span class="text-shimmer" style="width:80px"></span></td>
+    </tr>`;}
+  return `<table class="standings" aria-label="Standings (loading)">
+    <thead><tr>
+      <th style="width:34px">#</th>
+      <th style="text-align:left">Team</th>
+      <th>P</th><th>W</th><th>D</th><th>L</th>
+      <th>GF</th><th>GA</th><th>GD</th><th>Pts</th>
+      <th style="text-align:left">Form</th>
+    </tr></thead>
+    <tbody>${body}</tbody></table>`;
 }
-
-/* Put skeletons in immediately */
 tableEpl.innerHTML = skeletonTable(12);
 tableLaLiga.innerHTML = skeletonTable(12);
 
-/* helper: W/D/L => colored dots */
-function formToDots(form){
-  const map = { 'W':'🟢', 'D':'🟡', 'L':'🔴' };
-  return (form || '').toUpperCase().split('').map(c => map[c] || '⚪').join(' ');
-}
-
+function formToDots(form){ const map={'W':'🟢','D':'🟡','L':'🔴'}; return (form||'').toUpperCase().split('').map(c=>map[c]||'⚪').join(' '); }
 function renderStandings(el, rows){
-  const head = `
-    <table class="standings" aria-label="Standings">
-      <thead><tr>
-        <th style="width:34px">#</th>
-        <th style="text-align:left">Team</th>
-        <th>P</th><th>W</th><th>D</th><th>L</th>
-        <th>GF</th><th>GA</th><th>GD</th><th>Pts</th>
-        <th style="text-align:left">Form</th>
-      </tr></thead><tbody>`;
-  const body = rows.map(r => `
+  const head = `<table class="standings" aria-label="Standings"><thead><tr>
+    <th style="width:34px">#</th><th style="text-align:left">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th><th style="text-align:left">Form</th>
+  </tr></thead><tbody>`;
+  const body = rows.map(r=>`
     <tr>
-      <td><span class="badge">${r.pos ?? ''}</span></td>
+      <td><span class="badge">${r.pos??''}</span></td>
       <td style="text-align:left">
         <div style="display:flex;align-items:center;gap:8px">
-          ${r.logo ? `<img loading="lazy" src="${r.logo}" alt="" width="18" height="18" style="border-radius:4px;border:1px solid #223148;background:#0b1020">` : ''}
-          <span>${esc(r.team || '')}</span>
+          ${r.logo?`<img loading="lazy" src="${r.logo}" alt="" width="18" height="18" style="border-radius:4px;border:1px solid #223148;background:#0b1020">`:''}
+          <span>${(r.team||'')}</span>
         </div>
       </td>
-      <td>${r.p ?? ''}</td><td>${r.w ?? ''}</td><td>${r.d ?? ''}</td><td>${r.l ?? ''}</td>
-      <td>${r.gf ?? ''}</td><td>${r.ga ?? ''}</td><td>${r.gd ?? ''}</td>
-      <td><strong>${r.pts ?? ''}</strong></td>
-      <td style="text-align:left">${formToDots(r.form)}${r.form_pct ? ` <span style="color:#94a3b8;font-size:.8rem">(${r.form_pct}%)</span>`:''}</td>
+      <td>${r.p??''}</td><td>${r.w??''}</td><td>${r.d??''}</td><td>${r.l??''}</td>
+      <td>${r.gf??''}</td><td>${r.ga??''}</td><td>${r.gd??''}</td>
+      <td><strong>${r.pts??''}</strong></td>
+      <td style="text-align:left">${formToDots(r.form)}${r.form_pct?` <span style="color:#94a3b8;font-size:.8rem">(${r.form_pct}%)</span>`:''}</td>
     </tr>`).join('');
   el.innerHTML = head + body + '</tbody></table>';
 }
-
-async function fetchJSONWithRetry(url, tries = 3, delay = 600) {
-  for (let i = 0; i < tries; i++) {
-    try {
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.json();
-    } catch (e) {
-      if (i === tries - 1) throw e;
-      await new Promise(res => setTimeout(res, delay * Math.pow(1.5, i)));
-    }
+async function fetchJSONWithRetry(url, tries=3, delay=600){
+  for(let i=0;i<tries;i++){
+    try{ const r = await fetch(url,{cache:"no-store"}); if(!r.ok) throw new Error(`HTTP ${r.status}`); return await r.json(); }
+    catch(e){ if(i===tries-1) throw e; await new Promise(res=>setTimeout(res, delay*Math.pow(1.5,i))); }
   }
 }
-
-async function fetchStandings(url, fallback){
-  try{
-    const j = await fetchJSONWithRetry(url, 3, 500);
-    if (Array.isArray(j)) return j;
-    if (Array.isArray(j.standings)) return j.standings;
-    return fallback;
-  }catch(_){ return fallback; }
-}
-
-/* Placeholder rows while backend warms (won’t be shown long) */
-const EPL_FALLBACK = Array.from({length:10}).map((_,i)=>({pos:i+1, team:'', logo:'', p:'',w:'',d:'',l:'',gf:'',ga:'',gd:'',pts:'', form:'', form_pct:0}));
-const LALIGA_FALLBACK = Array.from({length:10}).map((_,i)=>({pos:i+1, team:'', logo:'', p:'',w:'',d:'',l:'',gf:'',ga:'',gd:'',pts:'', form:'', form_pct:0}));
-
+const EPL_FALLBACK = Array.from({length:10}).map((_,i)=>({pos:i+1}));
+const LALIGA_FALLBACK = Array.from({length:10}).map((_,i)=>({pos:i+1}));
 let formN = 5;
 async function loadTables(){
-  const epl = await fetchStandings(`/standings/epl?n=${formN}`, EPL_FALLBACK);
-  const laliga = await fetchStandings(`/standings/laliga?n=${formN}`, LALIGA_FALLBACK);
-  renderStandings(tableEpl, epl);
-  renderStandings(tableLaLiga, laliga);
+  try{
+    const epl = await fetchJSONWithRetry(`/standings/epl?n=${formN}`,3,500);
+    const laliga = await fetchJSONWithRetry(`/standings/laliga?n=${formN}`,3,500);
+    renderStandings(tableEpl, Array.isArray(epl)?epl:(epl.standings||EPL_FALLBACK));
+    renderStandings(tableLaLiga, Array.isArray(laliga)?laliga:(laliga.standings||LALIGA_FALLBACK));
+  }catch(_){
+    renderStandings(tableEpl, EPL_FALLBACK);
+    renderStandings(tableLaLiga, LALIGA_FALLBACK);
+  }
 }
-document.getElementById('form5')?.addEventListener('click', ()=>{ formN = 5; loadTables(); });
-document.getElementById('form10')?.addEventListener('click', ()=>{ formN = 10; loadTables(); });
-
-/* initial + refresh on tab focus */
+document.getElementById('form5')?.addEventListener('click', ()=>{ formN=5; loadTables(); });
+document.getElementById('form10')?.addEventListener('click', ()=>{ formN=10; loadTables(); });
 loadTables();
-document.addEventListener('visibilitychange', () => { if (!document.hidden) loadTables(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) loadTables(); });
+
+/* ===== Team Panel modal ===== */
+const EPL_TEAMS = ["Arsenal","Aston Villa","AFC Bournemouth","Brentford","Brighton & Hove Albion","Chelsea","Crystal Palace","Everton","Fulham","Ipswich Town","Leicester City","Liverpool","Manchester City","Manchester United","Newcastle United","Nottingham Forest","Southampton","Tottenham Hotspur","West Ham United","Wolverhampton Wanderers"];
+(function initTeamJump(){
+  const sel = document.getElementById('teamJump2');
+  EPL_TEAMS.forEach(t=>{ const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
+  sel.value = "Manchester United";
+})();
+const openBtn = document.getElementById('openTeamBtn');
+const tpModal = document.getElementById('tpModal');
+const tpBackdrop = document.getElementById('tpBackdrop');
+const tpTitle = document.getElementById('tpTitle');
+const tpFrame = document.getElementById('tpFrame');
+const tpClose = document.getElementById('tpClose');
+function openTeamPanel(){
+  const team = document.getElementById('teamJump2').value || "Manchester United";
+  tpTitle.textContent = `Team Panel — ${team}`;
+  tpFrame.src = '/team?name=' + encodeURIComponent(team);
+  tpBackdrop.style.display='block';
+  tpModal.style.display='block';
+}
+function closeTeamPanel(){
+  tpBackdrop.style.display='none';
+  tpModal.style.display='none';
+  tpFrame.src='';
+}
+openBtn.addEventListener('click', openTeamPanel);
+tpClose.addEventListener('click', closeTeamPanel);
+tpBackdrop.addEventListener('click', closeTeamPanel);
+window.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeTeamPanel(); });
 </script>
 </body>
 </html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Mike — Team Panel</title>
+<style>
+  :root{ --bg:#0f172a; --panel:#111827; --card:#0e1726; --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; }
+  *{box-sizing:border-box;margin:0;padding:0} html,body{height:100%}
+  body{background:var(--bg); color:var(--text); font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  .wrap{max-width:1100px; margin:0 auto; padding:14px}
+  .row{display:grid; grid-template-columns:1.4fr .8fr; gap:16px}
+  @media (max-width:1000px){ .row{grid-template-columns:1fr} }
+  .card{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px}
+  h1{font-size:1.2rem; margin-bottom:10px}
+  h2{font-size:1rem; margin:8px 0}
+  .muted{color:var(--muted)}
+  .selector{display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap}
+  select{background:#0b1020; border:1px solid #223148; color:#e5e7eb; padding:10px 12px; border-radius:10px; min-width:200px}
+  button{background:var(--accent); color:#04210f; border:0; padding:10px 12px; font-weight:800; border-radius:10px; cursor:pointer}
+  .kpi{display:grid; grid-template-columns:repeat(4,1fr); gap:10px}
+  @media (max-width:720px){ .kpi{grid-template-columns:repeat(2,1fr)} }
+  .kpi .tile{background:#0b1020; border:1px solid #223148; border-radius:12px; padding:10px}
+  .chip{display:inline-block; background:#0b1020; border:1px solid #223148; padding:8px 12px; border-radius:999px; font-size:.9rem; margin:4px 6px 0 0; cursor:pointer}
+  .news li{margin-left:16px; list-style:disc}
+  .scroll-x{overflow:auto; -webkit-overflow-scrolling:touch}
+  table{width:100%; border-collapse:collapse; font-size:.92rem; min-width:520px}
+  th,td{border-bottom:1px solid #1f2937; padding:8px; text-align:left; white-space:nowrap}
+  pre{white-space:pre-wrap; background:#0b1020; border:1px solid #223148; border-radius:10px; padding:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="selector" style="justify-content:space-between">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <h1>Team Panel</h1>
+      <span class="muted">EPL only</span>
+    </div>
+    <!-- tiny link back to chat if opened standalone -->
+    <a href="/" style="color:#7dd3fc;text-decoration:none;font-size:.9rem">← Back to Chat</a>
+  </div>
+
+  <div class="selector">
+    <label for="team">Team:</label>
+    <select id="team"></select>
+    <button id="loadBtn">Load</button>
+    <span class="muted" id="status"></span>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2 id="teamTitle">Manchester United</h2>
+      <div id="lastMatch" class="muted" style="margin:6px 0 10px">Loading last match…</div>
+
+      <div class="kpi" id="kpis">
+        <div class="tile"><div class="muted">Corners avg (N)</div><div id="kpiCorners" style="font-size:1.4rem;font-weight:800">–</div></div>
+        <div class="tile"><div class="muted">Yellow cards avg (N)</div><div id="kpiYC" style="font-size:1.4rem;font-weight:800">–</div></div>
+        <div class="tile"><div class="muted">Red cards avg (N)</div><div id="kpiRC" style="font-size:1.4rem;font-weight:800">–</div></div>
+        <div class="tile"><div class="muted">Fouls avg (N)</div><div id="kpiFouls" style="font-size:1.4rem;font-weight:800">–</div></div>
+      </div>
+
+      <h2 style="margin-top:12px">Last 5</h2>
+      <div class="scroll-x">
+        <table id="last5"><thead><tr><th>Date</th><th>Venue</th><th>Opponent</th><th>Score</th><th>R</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <h2 style="margin-top:12px">Last 10</h2>
+      <div class="scroll-x">
+        <table id="last10"><thead><tr><th>Date</th><th>Venue</th><th>Opponent</th><th>Score</th><th>R</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Headlines</h2>
+      <ul class="news" id="news"></ul>
+      <h2 style="margin-top:12px">Ask Mike (explain well)</h2>
+      <div class="chip" data-q="Show {TEAM} last match (include cards and fouls).">Last match</div>
+      <div class="chip" data-q="{TEAM} vs Arsenal — give me best props and a final bet">Vs Arsenal</div>
+      <div class="chip" data-q="What did {TEAM} play last weekend?">Last weekend</div>
+      <pre id="askOut" style="margin-top:8px">Click a chip above…</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const EPL_TEAMS = [
+  "Arsenal","Aston Villa","AFC Bournemouth","Brentford","Brighton & Hove Albion",
+  "Chelsea","Crystal Palace","Everton","Fulham","Ipswich Town",
+  "Leicester City","Liverpool","Manchester City","Manchester United","Newcastle United",
+  "Nottingham Forest","Southampton","Tottenham Hotspur","West Ham United","Wolverhampton Wanderers"
+];
+
+const q = new URLSearchParams(location.search);
+let team = q.get('name') || 'Manchester United';
+
+const teamSel = document.getElementById('team');
+const loadBtn = document.getElementById('loadBtn');
+const statusEl = document.getElementById('status');
+const teamTitle = document.getElementById('teamTitle');
+const lastMatch = document.getElementById('lastMatch');
+const newsEl = document.getElementById('news');
+const askOut = document.getElementById('askOut');
+
+const kpiCorners = document.getElementById('kpiCorners');
+const kpiYC = document.getElementById('kpiYC');
+const kpiRC = document.getElementById('kpiRC');
+const kpiFouls = document.getElementById('kpiFouls');
+
+const last5 = document.getElementById('last5').querySelector('tbody');
+const last10 = document.getElementById('last10').querySelector('tbody');
+
+EPL_TEAMS.forEach(t => {
+  const opt = document.createElement('option');
+  opt.value = t; opt.textContent = t;
+  if (t.toLowerCase() === team.toLowerCase()) opt.selected = true;
+  teamSel.appendChild(opt);
+});
+
+function esc(s){ return (s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+async function jget(url){ const r = await fetch(url, {cache:"no-store"}); if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
+async function jpost(url, body){ const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
+
+function renderRows(tbody, rows){
+  tbody.innerHTML = rows.map(r => `<tr>
+    <td>${esc(r.date)}</td><td>${esc(r.venue)}</td><td>${esc(r.opponent)}</td><td>${esc(r.score)}</td><td>${esc(r.result)}</td>
+  </tr>`).join('');
+}
+
+async function loadAll(){
+  statusEl.textContent = 'Loading…';
+  team = teamSel.value;
+  teamTitle.textContent = team;
+
+  // Last match (with cards/fouls line) via chat endp
+  try{
+    const j = await jpost('/ask/', {question: `Show ${team} last match (include cards and fouls).`});
+    lastMatch.textContent = j.response || '—';
+  }catch{ lastMatch.textContent = '—'; }
+
+  // Summary avgs
+  try{
+    const j = await jget(`/api/team/${encodeURIComponent(team)}/summary?n=5`);
+    if(j.ok && j.averages){
+      kpiCorners.textContent = j.averages.corners;
+      kpiYC.textContent = j.averages.yellow;
+      kpiRC.textContent = j.averages.red;
+      kpiFouls.textContent = j.averages.fouls;
+    }else{
+      kpiCorners.textContent = kpiYC.textContent = kpiRC.textContent = kpiFouls.textContent = '–';
+    }
+  }catch{ kpiCorners.textContent = kpiYC.textContent = kpiRC.textContent = kpiFouls.textContent = '–'; }
+
+  // Last 5 / 10
+  try{
+    const j5 = await jget(`/api/team/${encodeURIComponent(team)}/last5`);
+    renderRows(last5, j5.results || []);
+    const j10 = await jget(`/api/team/${encodeURIComponent(team)}/last10`);
+    renderRows(last10, j10.results || []);
+  }catch{}
+
+  // News
+  try{
+    const j = await jget(`/api/team/${encodeURIComponent(team)}/news`);
+    newsEl.innerHTML = (j.headlines || []).map(h => `<li>${esc(h)}</li>`).join('');
+  }catch{ newsEl.innerHTML = '<li>—</li>'; }
+
+  statusEl.textContent = '';
+}
+
+document.querySelectorAll('.chip').forEach(ch => ch.addEventListener('click', async ()=>{
+  const q = ch.dataset.q.replace('{TEAM}', teamSel.value);
+  askOut.textContent = 'Thinking…';
+  try{
+    const j = await jpost('/ask/', {question: q});
+    askOut.textContent = j.response || '—';
+  }catch{ askOut.textContent = 'Error.'; }
+}));
+
+loadBtn.addEventListener('click', loadAll);
+window.addEventListener('DOMContentLoaded', loadAll);
+</script>
+</body>
+</html>
