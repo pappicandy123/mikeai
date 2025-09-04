@@ -16,7 +16,7 @@ DEFAULT_TIMEOUT = 20
 
 # ----- tiny in-memory cache
 _CACHE: Dict[str, Tuple[float, Any]] = {}
-CACHE_TTL = int(os.getenv("CACHE_TTL", "180"))  # 3 minutes default
+CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutes default
 
 def _cache_get(key: str):
     item = _CACHE.get(key)
@@ -263,9 +263,7 @@ def team_last_n_results(team_id: int, n: int = 5, league_id: int = 39, season: O
 
 # ---------- New: raw last-N fixtures (with fixture IDs) ----------
 def team_last_n_fixtures(team_id: int, n: int = 5, league_id: int = 39, season: Optional[int] = None) -> List[Dict[str, Any]]:
-    """
-    Returns last-N league fixtures for a team with fixture id, date, and home/away info.
-    """
+    """Returns last-N league fixtures for a team with fixture id, date, and home/away info."""
     if season is None: season = current_season()
     n = max(1, min(10, int(n or 5)))
     data = _get("/fixtures", {"team": team_id, "league": league_id, "season": season, "last": n})
@@ -289,9 +287,7 @@ def _league_key(league_id: int, season: Optional[int]) -> str:
     return f"{league_id}:{season or current_season()}"
 
 def list_league_teams_map(league_id: int = 39, season: Optional[int] = None) -> Dict[str, int]:
-    """
-    Build a name->id map for a league season so we don't rely on brittle 'search'.
-    """
+    """Build a name->id map for a league season so we don't rely on brittle 'search'."""
     if season is None: season = current_season()
     key = _league_key(league_id, season)
     cached = _cache_get(f"TEAMMAP|{key}")
@@ -351,8 +347,7 @@ NICK_TO_CANON = {
 }
 
 def resolve_team_id(team_query: str, league_id: int = 39, season: Optional[int] = None) -> Optional[int]:
-    """
-    Robust resolver:
+    """Robust resolver:
       1) use league team map (fast + reliable)
       2) try nickname->canonical, then map
       3) fallback to API /teams?search=

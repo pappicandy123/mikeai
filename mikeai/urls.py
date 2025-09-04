@@ -1,42 +1,27 @@
 from django.urls import path
-from .views import (
-    chat_page, AskAssistant,
-    api_fixtures, api_random_pick, api_best_bets,
-    api_team_last5, api_team_last10, api_team_news
-)
-
 from . import views
-from .standings import standings_epl, standings_laliga  # use richer standings module
 
 urlpatterns = [
-    path('', chat_page, name='chat'),
+    path('', views.chat_page, name='chat'),
+    path('team', views.team_panel, name='team_panel'),
 
-    # Chat
-    path('ask/', AskAssistant.as_view(), name='ask'),
+    # Chat + profile
+    path('ask/', views.AskAssistant.as_view(), name='ask'),
+    path('me', views.me, name='me'),
 
-    # Tables
-    path('standings/epl', standings_epl, name='standings_epl'),
-    path('standings/laliga', standings_laliga, name='standings_laliga'),
+    # REST data
+    path('api/fixtures', views.api_fixtures, name='api_fixtures'),
+    path('api/random-pick', views.api_random_pick, name='api_random_pick'),
+    path('api/best-bets', views.api_best_bets, name='api_best_bets'),
 
-    # Data APIs
-    path('api/fixtures', api_fixtures, name='api_fixtures'),
-    path('api/random-pick', api_random_pick, name='api_random_pick'),
-    path('api/best-bets', api_best_bets, name='api_best_bets'),
+    path('api/team/<str:name>/last5', views.api_team_last5, name='api_team_last5'),
+    path('api/team/<str:name>/last10', views.api_team_last10, name='api_team_last10'),
+    path('api/team/<str:name>/news', views.api_team_news, name='api_team_news'),
+    path('api/team/<str:name>/summary', views.api_team_summary, name='api_team_summary'),
 
-    # NEW: Team REST endpoints
-    path('api/team/<str:name>/last5', api_team_last5, name='api_team_last5'),
-    path('api/team/<str:name>/last10', api_team_last10, name='api_team_last10'),
-    path('api/team/<str:name>/news', api_team_news, name='api_team_news'),
-    path('team', views.team_panel),  # /team?name=Manchester%20United
+    # Standings for index.html
+    path('standings/epl', views.standings_epl, name='standings_epl'),
+    path('standings/laliga', views.standings_laliga, name='standings_laliga'),
 
-    path('api/team/<str:name>/summary', views.api_team_summary),
-    path('api/team/<str:name>/last5', views.api_team_last5),
-    path('api/team/<str:name>/last10', views.api_team_last10),
-    path('api/team/<str:name>/news', views.api_team_news),
-
-    path('ask/', views.AskAssistant.as_view()),
-    path('standings/epl', standings_epl),
-    path('standings/laliga', standings_laliga),
-    path('api/fixtures', views.api_fixtures),
-    path('api/random-pick', views.api_random_pick),
+    path('health', views.health, name='health'),
 ]

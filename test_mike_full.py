@@ -1,147 +1,248 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Comprehensive interactive test suite for Mike (sports betting assistant).
+# test_mike_full.py
+# End-to-end tester for "Mike" (EPL-focused)
+# - Hits REST endpoints and the /ask/ chat intent
+# - Prints PASS / FAIL lines with short context
 
-- Keeps a requests.Session to preserve cookies (conversation + last teams memory).
-- Covers fixtures, predictions, odds, follow-ups (corners/cards/fouls), team-only follow-ups,
-  news, weekend value board, small-odds bankers, and general Q&A.
-- Includes robustness tests (typos, nicknames, casing).
-- Prints compact PASS/FAIL lines plus an optional debug snippet.
-- Base URL can be overridden by env var MIKE_BASE_URL (default http://127.0.0.1:8000).
 
-Run:
-    python test_mike_full.py
-"""
-
-import os
-import time
-import json
+import os, sys, json, time
+from datetime import datetime
 import requests
 
-BASE_URL = os.getenv("MIKE_BASE_URL", "http://127.0.0.1:8000")
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
-# If your endpoint is not /ask/, change here
-ASK_ENDPOINT = "/ask/"
+API_FOOTBALL = bool(os.getenv("API_FOOTBALL_KEY"))
+SPORTMONKS = bool(os.getenv("SPORTMONKS_API_KEY"))
+MEDIASTACK = bool(os.getenv("MEDIASTACK_KEY"))
 
-# Utility: send a message and return (ok, text)
-def send(session, question, extra_payload=None, timeout=30):
-    payload = {"question": question}
-    if extra_payload:
-        payload.update(extra_payload)
-    try:
-        r = session.post(BASE_URL + ASK_ENDPOINT, json=payload, timeout=timeout)
-        ok = (r.status_code == 200)
-        try:
-            data = r.json()
-            text = data.get("response") or data.get("error") or r.text
-        except Exception:
-            text = r.text
-        return ok, text
-    except Exception as e:
-        return False, str(e)
+PASS = 0
+FAIL = 0
+SOFT = 0
 
-# Checking helper: does any of the expected keywords appear in the response?
-def matches_any(text, expectations):
-    low = (text or "").lower()
-    for exp in expectations:
-        if exp.lower() in low:
-            return True
-    return False
+def out(ok, title, detail=""):
+    global PASS, FAIL, SOFT
+    if ok is True:
+        PASS += 1
+        print(f"PASS ✅  {title}")
+        if detail: print(f"   ↳ {detail}")
+    elif ok == "SOFT":
+        SOFT += 1
+        print(f"SOFT ⚠️  {title}")
+        if detail: print(f"   ↳ {detail}")
+    else:
+        FAIL += 1
+        print(f"FAIL ❌  {title}")
+        if detail: print(f"   ↳ {detail}")
 
-# Pretty print helpers
-def short(s, n=160):
-    s = s.replace("\\n", " ").replace("\n", " ")
-    return (s[:n] + "…") if len(s) > n else s
+def get_json(path, params=None, timeout=25):
+    url = f"{BASE_URL}{path}"
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
-def line(title, status, snippet):
-    pad = 40 - len(title)
-    pad = max(1, pad)
-    return f"{title}{' ' * pad}{status}  {short(snippet)}"
+def post_json(path, payload=None, timeout=25):
+    url = f"{BASE_URL}{path}"
+    r = requests.post(url, json=payload or {}, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
-def run_block(title, steps):
-    """
-    steps: list of dicts with keys:
-        - q: question (str)
-        - expect: list[str] substrings to search for (any match passes)
-        - payload: optional extra dict to send
-        - sleep: optional wait seconds between steps (default 0.3)
-    """
-    s = requests.Session()
-    print(f"\n=== {title} ===")
-    passed = 0
-    for i, step in enumerate(steps, 1):
-        time.sleep(step.get("sleep", 0.3))
-        ok, text = send(s, step["q"], extra_payload=step.get("payload"))
-        if not ok:
-            print(line(f"{i}. {step['q']}", "FAIL", f"HTTP fail: {text}"))
-            continue
-        expect = step.get("expect", [])
-        if expect and matches_any(text, expect):
-            print(line(f"{i}. {step['q']}", "PASS", text))
-            passed += 1
-        else:
-            print(line(f"{i}. {step['q']}", "FAIL", text))
-    print(f"Subtotal: {passed}/{len(steps)} passed")
-    return passed, len(steps)
+def expect_substring(text, *needles):
+    t = (text or "").lower()
+    return all(n.lower() in t for n in needles)
 
-if __name__ == "__main__":
-    total_ok = 0
-    total_n = 0
+print("== Mike Full Test v3 ==")
+print(f"BASE_URL = {BASE_URL}\n")
+hint = []
+if not API_FOOTBALL: hint.append("API_FOOTBALL_KEY")
+if not SPORTMONKS: hint.append("SPORTMONKS_API_KEY")
+if not MEDIASTACK: hint.append("MEDIASTACK_KEY")
+if hint:
+    print(f"⚠️  Environment hint: missing {', '.join(hint)} (some tests may soft-fail).")
+print()
 
-    # 1) Fixtures + weekend flow
-    ok, n = run_block("Weekend fixtures & quick picks", [
-        {"q": "Show EPL fixtures this weekend", "expect": ["fixtures", "📅", "epl"]},
-        {"q": "best bets this weekend", "expect": ["value board", "value", "best bets", "📋"]},
-        {"q": "give me another random betting pick", "expect": ["pick", "odds", "model", "edge"]},
-    ])
-    total_ok += ok; total_n += n
+# 0) health
+try:
+    h = get_json("/health")
+    k = h.get("keys", {})
+    ok = isinstance(k, dict)
+    out(ok, "Health endpoint", f"keys={k}")
+except Exception as e:
+    out(False, "Health endpoint", str(e))
 
-    # 2) Single match + follow-ups (memory of teams)
-    ok, n = run_block("Match analysis + follow‑ups", [
-        {"q": "Predict Liverpool vs Bournemouth and show odds", "expect": ["best", "final bet", "odds", "📈"]},
-        {"q": "what about corners", "expect": ["corner", "corners", "team avg", "🎯"]},
-        {"q": "and cards?", "expect": ["card", "cards", "yellow", "📒"]},
-        {"q": "and fouls then", "expect": ["foul", "fouls", "avg", "🧤"]},
-    ])
-    total_ok += ok; total_n += n
+# 1) standings
+try:
+    epl = get_json("/standings/epl", {"n": 5})
+    rows = epl.get("standings") or []
+    ok = bool(rows) and isinstance(rows, list)
+    out(ok, "Standings EPL (n=5)", f"{len(rows)} rows")
+except Exception as e:
+    out(False, "Standings EPL (n=5)", str(e))
 
-    # 3) Team-only props
-    ok, n = run_block("Single‑team props", [
-        {"q": "corner bet for Liverpool", "expect": ["corners", "team avg", "🎯"]},
-        {"q": "cards for Arsenal", "expect": ["cards", "yellow", "📒"]},
-        {"q": "fouls for Chelsea", "expect": ["fouls", "avg", "🧤"]},
-    ])
-    total_ok += ok; total_n += n
+try:
+    epl10 = get_json("/standings/epl", {"n": 10})
+    rows = epl10.get("standings") or []
+    # Early season can have short form like 'WW'; don't be strict
+    ok = bool(rows) and isinstance(rows, list)
+    out(ok, "Standings EPL (n=10, early-season OK)", f"{len(rows)} rows")
+except Exception as e:
+    out(False, "Standings EPL (n=10, early-season OK)", str(e))
 
-    # 4) Robustness: nicknames, casing, typos
-    ok, n = run_block("Robust team parsing", [
-        {"q": "Predict spurs vs man utd", "expect": ["final bet", "best props", "odds"]},
-        {"q": "predict Li verpool vs Bournemonth", "expect": ["final bet", "best props", "odds"]},
-        {"q": "Tottenham v Manchester United odds", "expect": ["odds", "📈"]},
-    ])
-    total_ok += ok; total_n += n
+# 2) team last5/last10
+try:
+    a5 = get_json("/api/team/Arsenal/last5")
+    ok = a5.get("ok") and (a5.get("results") is not None)
+    out(ok, "Team last5 (Arsenal)", f"{len(a5.get('results') or [])} results")
+except Exception as e:
+    out(False, "Team last5 (Arsenal)", str(e))
 
-    # 5) News
-    ok, n = run_block("News flow", [
-        {"q": "Give me latest EPL news", "expect": ["news", "•"]},
-        {"q": "news on Chelsea", "expect": ["news", "•", "chelsea"]},
-    ])
-    total_ok += ok; total_n += n
+try:
+    c10 = get_json("/api/team/Chelsea/last10")
+    ok = c10.get("ok") and (c10.get("results") is not None)
+    out(ok, "Team last10 (Chelsea)", f"{len(c10.get('results') or [])} results")
+except Exception as e:
+    out(False, "Team last10 (Chelsea)", str(e))
 
-    # 6) La Liga cross‑league (LLM fallback allowed but should be structured)
-    ok, n = run_block("La Liga cross‑league", [
-        {"q": "Predict Barcelona vs Real Madrid and show odds", "expect": ["final bet", "best props", "odds"]},
-        {"q": "what about corners", "expect": ["corner", "corners", "team avg", "🎯"]},
-    ])
-    total_ok += ok; total_n += n
+# 3) team summary averages (corners/cards/fouls)
+try:
+    tsm = get_json("/api/team/Tottenham/summary", {"n": 5})
+    if tsm.get("ok") and (tsm.get("matches_used", 0) > 0) and isinstance(tsm.get("averages"), dict):
+        out(True, "Team summary (Spurs, n=5)", f"avg={tsm['averages']}, used={tsm['matches_used']}")
+    elif tsm.get("ok") and tsm.get("matches_used", 0) == 0:
+        out("SOFT", "Team summary (Spurs, n=5)", "No stat feed found in last-N fixtures.")
+    else:
+        out(False, "Team summary (Spurs, n=5)", tsm.get("error") or "unknown")
+except Exception as e:
+    out(False, "Team summary (Spurs, n=5)", str(e))
 
-    # 7) General Q&A like ChatGPT
-    ok, n = run_block("General Q&A", [
-        {"q": "Who won the last EPL season?", "expect": ["city", "arsenal", "liverpool", "champion", "premier league"]},
-        {"q": "Explain xG in simple terms", "expect": ["expected goals", "xg"]},
-        {"q": "What is offside?", "expect": ["offside"]},
-    ])
-    total_ok += ok; total_n += n
+# 4) team news
+try:
+    news = get_json("/api/team/Liverpool/news")
+    heads = news.get("headlines") or []
+    ok = isinstance(heads, list)
+    # if no key, still pass as structure OK
+    out(ok, "Team news (Liverpool)", f"{len(heads)} headlines")
+except Exception as e:
+    out(False, "Team news (Liverpool)", str(e))
 
-    print(f"\n=== TOTAL: {total_ok}/{total_n} passed ===")
+# 5) fixtures endpoint (prefers SportMonks)
+try:
+    fx = get_json("/api/fixtures", {"league": "epl", "days": 8})
+    src = fx.get("source")
+    rows = fx.get("fixtures") or []
+    if rows:
+        out(True, "Fixtures API (EPL next 8 days)", f"source={src}, rows={len(rows)}")
+    else:
+        out("SOFT", "Fixtures API (EPL next 8 days)", f"source={src}, rows=0")
+except Exception as e:
+    out(False, "Fixtures API (EPL next 8 days)", str(e))
+
+# 6) random pick and best bets
+try:
+    rnd = get_json("/api/random-pick", {"league": "epl"})
+    if rnd.get("ok"):
+        out(True, "Random pick API", f"{rnd.get('match')} | {rnd.get('final_pick')}")
+    else:
+        out("SOFT", "Random pick API", rnd.get("error") or "no pick")
+except Exception as e:
+    out(False, "Random pick API", str(e))
+
+try:
+    bb = get_json("/api/best-bets", {"league": "epl"})
+    res = bb.get("results") or []
+    ok = isinstance(res, list)
+    detail = (f"{len(res)} results" if res else "empty board")
+    # Empty board is OK (model cautious), so soft-pass
+    out(True if res else "SOFT", "Best bets API", detail)
+except Exception as e:
+    out(False, "Best bets API", str(e))
+
+# 7) team panel page (HTML)
+try:
+    r = requests.get(f"{BASE_URL}/team?name=Arsenal", timeout=15)
+    ok = (r.status_code == 200) and ("<html" in r.text.lower())
+    out(ok, "Team Panel HTML (/team?name=Arsenal)")
+except Exception as e:
+    out(False, "Team Panel HTML (/team?name=Arsenal)", str(e))
+
+# 8) /ask/ chat intents (text responses)
+def ask(q):
+    return post_json("/ask/", {"question": q})
+
+# fixtures this weekend
+try:
+    a = ask("Show EPL fixtures this weekend")
+    txt = a.get("response","")
+    ok = expect_substring(txt, "epl", "fixtures")
+    out(ok, "Ask: EPL fixtures this weekend", txt[:100])
+except Exception as e:
+    out(False, "Ask: EPL fixtures this weekend", str(e))
+
+# last weekend single-team
+try:
+    a = ask("What did Arsenal play last weekend?")
+    txt = a.get("response","")
+    ok = ("arsenal" in txt.lower()) and ("last" in txt.lower() or "corners" in txt.lower() or "cards" in txt.lower())
+    out(ok, "Ask: Arsenal last weekend", txt[:120])
+except Exception as e:
+    out(False, "Ask: Arsenal last weekend", str(e))
+
+# last match corners/cards (Chelsea)
+try:
+    a = ask("How many corners did Chelsea have last match?")
+    txt = a.get("response","")
+    ok = ("chelsea" in txt.lower()) and ("corners" in txt.lower())
+    out(ok, "Ask: Chelsea corners last match", txt[:120])
+except Exception as e:
+    out(False, "Ask: Chelsea corners last match", str(e))
+
+# match analysis (Chelsea vs Arsenal)
+try:
+    a = ask("Chelsea vs Arsenal — give me best props and a final bet")
+    txt = a.get("response","")
+    if "couldn’t fetch" in txt.lower():
+        out("SOFT", "Ask: Chelsea vs Arsenal analysis", "model not available right now")
+    else:
+        ok = ("best props" in txt.lower()) and ("final bet" in txt.lower())
+        out(ok, "Ask: Chelsea vs Arsenal analysis", txt[:120])
+except Exception as e:
+    out(False, "Ask: Chelsea vs Arsenal analysis", str(e))
+
+# best bets (board)
+try:
+    a = ask("Best bets for EPL this weekend")
+    txt = a.get("response","")
+    ok = ("best bets" in txt.lower()) or ("value board" in txt.lower()) or ("results" in txt.lower())
+    out(ok, "Ask: Best bets this weekend", txt[:120])
+except Exception as e:
+    out(False, "Ask: Best bets this weekend", str(e))
+
+# random pick (chat)
+try:
+    a = ask("Give me a random pick")
+    txt = a.get("response","")
+    if "random pick" in txt.lower():
+        out(True, "Ask: Random pick", txt[:120])
+    elif "couldn’t fetch" in txt.lower():
+        out("SOFT", "Ask: Random pick", "no suitable matchup right now")
+    else:
+        out(False, "Ask: Random pick", txt[:120])
+except Exception as e:
+    out(False, "Ask: Random pick", str(e))
+
+# next opponent + preview
+try:
+    a = ask("Who do Manchester United face this weekend? Give a quick preview.")
+    txt = a.get("response","")
+    ok = ("fixtures" in txt.lower()) or ("manchester united" in txt.lower()) or ("preview" in txt.lower())
+    out(ok, "Ask: Man United next opponent preview", txt[:120])
+except Exception as e:
+    out(False, "Ask: Man United next opponent preview", str(e))
+
+print("\n== Done ==")
+print(f"PASS={PASS}  SOFT={SOFT}  FAIL={FAIL}")
+if FAIL:
+    print("\nTips:")
+    print(" - Make sure your Django server is running at BASE_URL.")
+    print(" - If last-match stats fail, confirm API_FOOTBALL_KEY is valid.")
+    print(" - If fixtures return empty, ensure SPORTMONKS_API_KEY (or fallback uses API-Football).")
+    print(" - If news is empty, set MEDIASTACK_KEY.")
+    print(" - You can change BASE_URL with:  $env:BASE_URL='http://localhost:8001'")

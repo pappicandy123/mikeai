@@ -21,7 +21,8 @@ class PredictionHistory(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class UserContext(models.Model):
+    session_key = models.CharField(max_length=40, unique=True, null=True, blank=True)  # Tie to Django session
     recent_leagues = models.TextField(blank=True)
     recent_bet_types = models.TextField(blank=True)
     history_summary = models.TextField(blank=True)
-
+    chat_history = models.JSONField(default=list)  # [{"role": "user", "content": "..."}, ...]

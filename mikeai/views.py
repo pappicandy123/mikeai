@@ -1,12 +1,12 @@
-# assistant/views.py — Mike v5.2 (EPL-only enrichments)
-
 import os
 import re
 import json
 import random
 import unicodedata
+import difflib
+import time
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import timedelta, date
+from datetime import timedelta
 
 import requests
 from django.http import JsonResponse, HttpResponse
@@ -14,37 +14,32 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from .models import UserContext
 from . import api_football as af
+from .sportmonks import get_fixtures_by_range as sm_get_fixtures
 from .standings import standings_epl, standings_laliga
+from .grok_utils import ask_grok
 
-# Optional OpenAI
-try:
-    from openai import OpenAI
-    OPENAI = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    OPENAI_OK = True
-except Exception:
-    OPENAI, OPENAI_OK = None, False
-
-MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-SPORTMONKS_KEY     = os.getenv("SPORTMONKS_API_KEY")
-SM_LEAGUE_EPL      = os.getenv("SPORTMONKS_LEAGUE_EPL")
-SM_LEAGUE_LALIGA   = os.getenv("SPORTMONKS_LEAGUE_LALIGA")
-MEDIASTACK_KEY     = os.getenv("MEDIASTACK_KEY")
-ODDS_API_KEY       = os.getenv("ODDS_API_KEY")
-
-SM_BASE = "https://api.sportmonks.com/v3/football"
+# Config
+SPORTMONKS_KEY = os.getenv("SPORTMONKS_API_KEY")
+SM_LEAGUE_EPL = os.getenv("SPORTMONKS_LEAGUE_EPL", "8")  # Default to 8 for EPL
+SM_LEAGUE_LALIGA = os.getenv("SPORTMONKS_LEAGUE_LALIGA", "140")
+MEDIASTACK_KEY = os.getenv("MEDIASTACK_KEY")
 AF_LEAGUE = {"epl": 39, "laliga": 140}
 
+MIKE_SYSTEM = """
+You’re Mike, the user’s best mate and sports guru. Chat like we’re chilling with a pint—super casual, fun, emojis aplenty (⚽🏀). Answer any sports question (EPL, NBA, NFL, cricket, etc.) using provided stats. Always do a deep search on web/X first to get the most current, accurate data (injuries, form, stats) before answering. Reference past chats naturally. If data’s missing, say 'Lemme check, mate!' and search deeper. Always end with a hook like 'What’s your vibe, pal?' For predictions, give quick reasoning (goals, corners, cards, fouls) with confidence %.
+"""
+
+# ---------- pages ----------
 def chat_page(request):
+    """Render the chat interface."""
     return render(request, "index.html")
 
 def team_panel(request):
-    # simple template-less variant if you didn't create team.html yet
     try:
         return render(request, "team.html")
     except Exception:
@@ -56,12 +51,30 @@ def log_info(msg, **ctx):
 def log_err(msg, **ctx):
     print(f"[ERROR] {msg} {json.dumps(ctx, ensure_ascii=False)}" if ctx else f"[ERROR] {msg}")
 
-# ------------ name helpers (for parsing match prompts) ------------
+# ---------- cache (3 minutes) ----------
+_CACHE: Dict[str, Tuple[float, Any]] = {}
+CACHE_TTL = 180  # seconds
+
+def cache_get(key: str):
+    now = time.time()
+    hit = _CACHE.get(key)
+    if not hit: return None
+    t, val = hit
+    if now - t > CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return val
+
+def cache_set(key: str, val: Any):
+    _CACHE[key] = (time.time(), val)
+    return val
+
+# ---------- text helpers ----------
 def _norm(s: str) -> str:
     if not s: return ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
-    for junk in [" football club"," afc"," fc"," cf",".",",","-","_","|","/","\\","(",")","[","]","{","}",":",";","•","—"]:
+    for junk in [" football club"," afc"," fc"," cf",".",",","-","_","|","/","\\","(",")","[","]","{","}",":",";","•","—","'"]:
         s = s.replace(junk, " ")
     return " ".join(s.split())
 
@@ -79,6 +92,21 @@ NICKNAMES = {
     "ipswich":"Ipswich Town","leicester":"Leicester City","southampton":"Southampton",
     "brighton":"Brighton & Hove Albion","brighton and hove albion":"Brighton & Hove Albion",
 }
+CANON_BY_NORM: Dict[str, str] = {}
+for k, v in NICKNAMES.items():
+    CANON_BY_NORM[_norm(k)] = v
+for v in set(NICKNAMES.values()):
+    CANON_BY_NORM[_norm(v)] = v
+
+def _fuzzy_team(raw: str) -> Optional[str]:
+    cand = _norm(raw or "")
+    if not cand:
+        return None
+    names = list(CANON_BY_NORM.keys())
+    best = difflib.get_close_matches(cand, names, n=1, cutoff=0.75)
+    if best:
+        return CANON_BY_NORM.get(best[0])
+    return None
 
 def _resolve_team(raw: str) -> str:
     if not raw: return ""
@@ -86,562 +114,389 @@ def _resolve_team(raw: str) -> str:
     for k, v in NICKNAMES.items():
         if x == _norm(k) or x_nospace == _norm(k).replace(" ","") or _norm(k) in x or _norm(k).replace(" ","") in x_nospace:
             return v
+    fz = _fuzzy_team(raw)
+    if fz:
+        return fz
     return " ".join(w.capitalize() for w in raw.strip().split())
 
 def _extract_teams(text: str) -> Tuple[Optional[str], Optional[str]]:
     if not text: return (None, None)
     q = _norm(text)
-    m = re.search(r"(.+?)\s+(?:vs|v|versus|and|against|between)\s+(.+)", q, flags=re.I)
-    if not m: return (None, None)
-    return _resolve_team(m.group(1)), _resolve_team(m.group(2))
+    m = re.search(r"(.+?)\s+(?:vs|v|versus|against)\s+(.+)", q)
+    if m:
+        h, a = m.groups()
+        return _resolve_team(h), _resolve_team(a)
+    return None, None
 
 def _guess_team(text: str) -> Optional[str]:
     q = _norm(text)
-    for k, v in NICKNAMES.items():
-        if _norm(k) in q or _norm(k).replace(" ", "") in q.replace(" ", ""):
+    for k, v in CANON_BY_NORM.items():
+        if k in q or k.replace(" ", "") in q.replace(" ", ""):
             return v
-    # naive fallback: first 2 tokens
-    words = [w for w in text.split() if w.strip()]
-    if words:
-        return _resolve_team(" ".join(words[:2]))
-    return None
+    return _fuzzy_team(text)
 
-# ------------ time helpers ------------
-def _next_window(days=8):
+# ---------- session helpers ----------
+def _get_profile(request) -> Dict[str, Any]:
+    return request.session.get("profile", {"fav_team": None})
+
+def _set_profile(request, **kwargs):
+    prof = _get_profile(request)
+    prof.update(kwargs)
+    request.session["profile"] = prof
+    request.session.modified = True
+
+def _get_last_matchup(request) -> Tuple[Optional[str], Optional[str]]:
+    return request.session.get("last_matchup", (None, None))
+
+def _set_last_matchup(request, home: str, away: str):
+    request.session["last_matchup"] = (home, away)
+    request.session.modified = True
+
+# ---------- data helpers ----------
+def _next_window(days: int = 7) -> Tuple[timezone.datetime, timezone.datetime]:
     now = timezone.now()
     return now, now + timedelta(days=days)
 
-def _recent_weekend_dates() -> List[str]:
-    """
-    Return ISO dates for the Saturday and Sunday of the most recent *completed* weekend.
-    """
-    today = timezone.localtime().date()
-    wd = today.weekday()  # Mon=0..Sun=6
-    days_since_sat = (wd - 5) % 7
-    # If it's Sat/Sun, go to previous weekend
-    if wd >= 5:
-        days_since_sat += 7
-    saturday = today - timedelta(days=days_since_sat)
-    sunday = saturday + timedelta(days=1)
-    return [saturday.isoformat(), sunday.isoformat()]
-
-# ------------ SportMonks (fixtures fetch) ------------
-def sm_get(path, **params):
-    if not SPORTMONKS_KEY:
-        raise RuntimeError("SPORTMONKS_API_KEY missing")
-    q = {k: v for k, v in params.items() if v is not None}
-    q["api_token"] = SPORTMONKS_KEY
-    r = requests.get(f"{SM_BASE}/{path.lstrip('/')}", params=q, timeout=20)
-    r.raise_for_status()
-    return r.json(), r.url
-
-def _sm_league_id(slug: str):
-    if slug == "epl": return SM_LEAGUE_EPL
-    if slug == "laliga": return SM_LEAGUE_LALIGA
-    return None
-
-def sm_try_fixtures(league_slug: str, start_date: str, end_date: str):
-    lid = _sm_league_id(league_slug)
-    if not lid:
-        return [], f"SM league id missing for {league_slug}"
-    attempts = [
-        ("fixtures between", lambda: sm_get(f"fixtures/between/{start_date}/{end_date}", leagues=lid, include="participants")),
-        ("fixtures filters", lambda: sm_get("fixtures", filters=f"between:{start_date},{end_date}|league_id:{lid}", include="participants")),
-    ]
-    last_err = None
-    for label, fn in attempts:
-        try:
-            j, url = fn()
-            data = j.get("data") or []
-            out = []
-            for row in data:
-                dt = row.get("starting_at") or row.get("starting_at_utc") or ""
-                parts = row.get("participants") or []
-                home = next((p for p in parts if (p.get("meta") or {}).get("location")=="home"), {})
-                away = next((p for p in parts if (p.get("meta") or {}).get("location")=="away"), {})
-                out.append({
-                    "fixture": {"date": str(dt)},
-                    "teams": {
-                        "home": {"name": home.get("name") or home.get("short_code") or ""},
-                        "away": {"name": away.get("name") or away.get("short_code") or ""},
-                    }
-                })
-            log_info("SM fixtures ok", label=label, url=url, rows=len(out))
-            return out, f"SM ok via {label}"
-        except Exception as e:
-            last_err = str(e)
-            log_err("SM fixtures error", label=label, error=last_err)
-    return [], f"SM failed: {last_err or 'unknown'}"
-
-# ------------ AF fixtures fallback ------------
-def af_fixtures(league_slug: str, start_date: str, end_date: str):
-    lg = AF_LEAGUE.get(league_slug)
-    if not lg: return [], "AF: unknown league"
+def sm_try_fixtures(league: str, start_date: str, end_date: str) -> Tuple[List, bool]:
+    if not SPORTMONKS_KEY or not league in AF_LEAGUE:
+        return [], False
     try:
-        resp = af.get_fixtures_by_range(start_date, end_date, league_id=lg)
-        arr = resp.get("response", []) if isinstance(resp, dict) else resp
-        out = []
-        for fx in arr:
-            f = fx.get("fixture", {})
-            t = fx.get("teams", {})
-            out.append({
-                "fixture": {"date": f.get("date","")},
-                "teams": {
-                    "home": {"name": (t.get("home") or {}).get("name","")},
-                    "away": {"name": (t.get("away") or {}).get("name","")},
-                }
-            })
-        return out, "AF ok"
+        lid = SM_LEAGUE_EPL if league == "epl" else SM_LEAGUE_LALIGA
+        fixtures = sm_get_fixtures(lid, start_date, end_date)
+        return fixtures, True
     except Exception as e:
-        log_err("AF fixtures error", error=str(e))
-        return [], f"AF failed: {e}"
+        log_err("SportMonks fixtures failed", error=str(e), league=league)
+        return [], False
 
-# ------------ simple totals model (unchanged core) ------------
-def _safe_num(d: dict, path: list, default: float) -> float:
-    cur = d
-    for k in path:
-        if not isinstance(cur, dict): return default
-        cur = cur.get(k)
-        if cur is None: return default
+def af_fixtures(league: str, start_date: str, end_date: str) -> Tuple[List, bool]:
+    if not league in AF_LEAGUE:
+        return [], False
     try:
-        return float(str(cur).replace(",", "."))
-    except Exception:
-        return default
-
-def _form_score(form_str: str) -> float:
-    if not form_str: return 0.5
-    pts = 0
-    for ch in str(form_str).upper():
-        if ch == 'W': pts += 3
-        elif ch == 'D': pts += 1
-    return pts / (max(1, len(str(form_str))) * 3)
-
-def _quick_probs_from_team_stats(stats_home: dict, stats_away: dict):
-    gfh = _safe_num(stats_home, ['goals','for','average','home'], 1.4)
-    gfa = _safe_num(stats_away, ['goals','for','average','away'], 1.2)
-    gah = _safe_num(stats_home, ['goals','against','average','home'], 1.1)
-    gaa = _safe_num(stats_away, ['goals','against','average','away'], 1.1)
-    exp_total = max(1.2, (gfh + gfa + gah + gaa) / 2)
-    p_over25 = max(0.3, min(0.9, (exp_total - 1.8) / 1.6))
-    # win shares (coarse)
-    formH = _form_score(stats_home.get("form",""))
-    formA = _form_score(stats_away.get("form",""))
-    p_home = 0.45*formH + 0.25*(gfh - gaa + 1)/2 + 0.15
-    p_away = 0.45*formA + 0.25*(gfa - gah + 1)/2
-    scale = (p_home + p_away) or 1
-    draw_share = 0.25
-    p_home = (p_home/scale)*(1-draw_share); p_away=(p_away/scale)*(1-draw_share); p_draw=draw_share
-    p_home = max(0.05, min(0.85, p_home))
-    p_away = max(0.05, min(0.85, p_away))
-    p_draw = max(0.10, min(0.35, 1 - (p_home + p_away)))
-    p_o25 = p_over25
-    p_o15 = min(0.95, 0.80 + (p_o25-0.55)*0.6)
-    p_o05 = min(0.99, 0.90 + (p_o25-0.55)*0.4)
-    return {
-        "home_win": round(p_home*100),
-        "draw": round(p_draw*100),
-        "away_win": round(p_away*100),
-        "over25": round(p_o25*100),
-        "over15": round(p_o15*100),
-        "over05": round(p_o05*100),
-    }
-
-def _team_id_any(team: str, league_slug: str):
-    lg = AF_LEAGUE.get(league_slug, 39)
-    tid = af.resolve_team_id(team, league_id=lg)
-    return tid, lg
-
-def _model_for_pair(h, a, league_slug: str):
-    tidH, lg = _team_id_any(h, league_slug); tidA, _ = _team_id_any(a, league_slug)
-    if not (tidH and tidA and lg): return None
-    try:
-        sH = af.get_team_stats(tidH, league_id=lg).get("response", {})
-        sA = af.get_team_stats(tidA, league_id=lg).get("response", {})
-        return _quick_probs_from_team_stats(sH, sA)
+        lid = AF_LEAGUE[league]
+        fixtures = af.get_fixtures_by_range(start_date, end_date, lid)["response"]
+        return fixtures, True
     except Exception as e:
-        log_err("model_for_pair error", error=str(e), home=h, away=a)
-        return None
-
-# ------------ news ------------
-def get_team_headlines(team: str, limit: int = 3):
-    if not MEDIASTACK_KEY: return []
-    url = "http://api.mediastack.com/v1/news"
-    params = {"access_key": MEDIASTACK_KEY, "languages": "en", "keywords": team, "limit": limit, "sort": "published_desc"}
-    try:
-        r = requests.get(url, params=params, timeout=12)
-        r.raise_for_status()
-        data = r.json().get("data", [])
-        out = []
-        for a in data[:limit]:
-            src = a.get("source")
-            title = a.get("title")
-            published = (a.get("published_at") or "")[:16].replace("T", " ")
-            if title:
-                out.append(f"• {title} — {src} ({published})")
-        return out
-    except Exception:
-        return []
-
-# ------------ public APIs ------------
-@csrf_exempt
-def api_fixtures(request):
-    league = (request.GET.get("league") or "epl").lower()
-    try:
-        days = int(request.GET.get("days", "8"))
-    except Exception:
-        days = 8
-    start, end = _next_window(days)
-    sd = start.date().isoformat(); ed = end.date().isoformat()
-    sm_rows, _ = sm_try_fixtures(league, sd, ed)
-    if sm_rows:
-        return JsonResponse({"source": "sportmonks", "rows": len(sm_rows), "fixtures": sm_rows})
-    af_rows, note = af_fixtures(league, sd, ed)
-    return JsonResponse({"source": "api-football" if af_rows else "none", "rows": len(af_rows), "fixtures": af_rows, "note": note})
-
-def _collect_upcoming_pairs(league: str, days=8):
-    def collect(days_window: int):
-        start, end = _next_window(days_window)
-        sd = start.date().isoformat(); ed = end.date().isoformat()
-        sm_rows, _ = sm_try_fixtures(league, sd, ed)
-        rows = sm_rows or af_fixtures(league, sd, ed)[0]
-        pairs = []
-        seen = set()
-        for r in rows or []:
-            t = r.get("teams", {})
-            h_raw = (t.get("home") or {}).get("name") or ""
-            a_raw = (t.get("away") or {}).get("name") or ""
-            h = _resolve_team(h_raw); a = _resolve_team(a_raw)
-            if not h or not a: continue
-            key = (h, a)
-            if key in seen: continue
-            seen.add(key)
-            pairs.append(key)
-        return pairs
-    pairs = collect(days)
-    if not pairs: pairs = collect(14)
-    return pairs
-
-@csrf_exempt
-def api_random_pick(request):
-    league = (request.GET.get("league") or "epl").lower()
-    pairs = _collect_upcoming_pairs(league, days=8)
-    if not pairs:
-        return JsonResponse({"ok": False, "error": "No upcoming fixtures found."})
-    random.shuffle(pairs)
-    chosen = None
-    model = None
-    for h, a in pairs[:10]:
-        model = _model_for_pair(h, a, league)
-        if model:
-            chosen = (h, a)
-            break
-    if not model or not chosen:
-        return JsonResponse({"ok": False, "error": "I couldn’t fetch data for that matchup right now."})
-    h, a = chosen
-    pick = "Over 1.5 Goals"; conf = model["over15"]
-    if model["over25"] >= 58: pick, conf = "Over 2.5 Goals", model["over25"]
-    elif model["over05"] >= 90: pick, conf = "Over 0.5 Goals", model["over05"]
-    return JsonResponse({
-        "ok": True,
-        "match": f"{h} vs {a}",
-        "props": {"over05": model["over05"], "over15": model["over15"], "over25": model["over25"]},
-        "final_pick": {"market": pick, "confidence": conf}
-    })
-
-@csrf_exempt
-def api_best_bets(request):
-    league = (request.GET.get("league") or "epl").lower()
-    board = []
-    for h, a in _collect_upcoming_pairs(league, days=8)[:24]:
-        model = _model_for_pair(h, a, league)
-        if not model: continue
-        if model["over25"] >= 60:
-            board.append({"match": f"{h} vs {a}", "market": "Over 2.5", "model_p": model["over25"]})
-        elif model["over15"] >= 75:
-            board.append({"match": f"{h} vs {a}", "market": "Over 1.5", "model_p": model["over15"]})
-    board.sort(key=lambda x: x["model_p"], reverse=True)
-    return JsonResponse({"ok": True, "results": board[:8], "count": len(board)})
-
-# -------- Team REST (last5/last10 + news + summary) --------
-def _team_last_n_payload(team_name: str, n: int, league_id: int = 39) -> Dict[str, Any]:
-    tid = af.resolve_team_id(team_name, league_id=league_id)
-    if not tid:
-        msg = "Team not found. Make sure API_FOOTBALL_KEY is set and valid."
-        return {"ok": False, "error": msg, "team": team_name}
-    rows = af.team_last_n_results(tid, n=n, league_id=league_id)
-    form = af.team_form_last_n(tid, n=n, league_id=league_id)
-    return {"ok": True, "team": team_name, "n": n, "form": form, "results": rows}
-
-@csrf_exempt
-def api_team_last5(request, name: str):
-    team = _resolve_team(name)
-    return JsonResponse(_team_last_n_payload(team, 5, league_id=39))
-
-@csrf_exempt
-def api_team_last10(request, name: str):
-    team = _resolve_team(name)
-    return JsonResponse(_team_last_n_payload(team, 10, league_id=39))
-
-@csrf_exempt
-def api_team_news(request, name: str):
-    team = _resolve_team(name)
-    headlines = get_team_headlines(team, limit=5)
-    return JsonResponse({"ok": True, "team": team, "headlines": headlines})
-
-@csrf_exempt
-def api_team_summary(request, name: str):
-    """
-    Averages from last N EPL matches: corners, yellow cards, red cards, fouls.
-    GET /api/team/<name>/summary?n=5
-    """
-    team = _resolve_team(name)
-    tid = af.resolve_team_id(team, league_id=39)
-    if not tid:
-        return JsonResponse({"ok": False, "error": "Team not found.", "team": team})
-    try:
-        n = int(request.GET.get("n", "5"))
-    except Exception:
-        n = 5
-    n = max(3, min(10, n))
-    fixtures = af.team_last_n_fixtures(tid, n=n, league_id=39)
-    used = 0
-    sums = {"corners": 0, "yellow": 0, "red": 0, "fouls": 0}
-    for fx in fixtures:
-        fid = fx.get("fixture_id") or 0
-        home = (fx.get("home") or {}).get("id")
-        away = (fx.get("away") or {}).get("id")
-        if not fid or not home or not away:
-            continue
-        stats = af.fixture_stats_both(fid)
-        side = home if home == tid else away if away == tid else None
-        if not side or side not in stats:
-            continue
-        s = stats[side]
-        sums["corners"] += int(s.get("corner kicks") or 0)
-        sums["yellow"]  += int(s.get("yellow cards") or 0)
-        sums["red"]     += int(s.get("red cards") or 0)
-        sums["fouls"]   += int(s.get("fouls") or 0)
-        used += 1
-    if used == 0:
-        return JsonResponse({"ok": True, "team": team, "n": n, "matches_used": 0, "note": "No stat feed found in last-N fixtures."})
-    avgs = {k: round(v / used, 2) for k, v in sums.items()}
-    return JsonResponse({"ok": True, "team": team, "n": n, "matches_used": used, "averages": avgs})
-
-# --------- Chat (Ask) ---------
-MIKE_SYSTEM = (
-    "You are Mike — an elite, friendly football betting analyst focused on the English Premier League. "
-    "Be direct and numeric. Always explain your angle clearly.\n"
-    "FORMAT:\n"
-    "1) 🔐 Best Props — 2–5 props with confidence %\n"
-    "2) 🧾 Final Bet — choose ONE with confidence\n"
-    "3) 💡 Why — 3–8 bullets (use form, goals, injuries/news if available)\n"
-)
-
-def _ask_llm(messages):
-    if not OPENAI_OK: return None
-    try:
-        out = OPENAI.chat.completions.create(model=MODEL_NAME, messages=messages, temperature=0.7)
-        return out.choices[0].message.content
-    except Exception as e:
-        log_err("OpenAI error", error=str(e))
-        return None
-
-def _fmt_last_n_rows(tid: int, n: int = 5) -> str:
-    rows = af.team_last_n_results(tid, n=n, league_id=39)
-    if not rows: return "No recent matches found."
-    lines = [f"Last {len(rows)} matches:"]
-    for r in rows:
-        lines.append(f"- {r['date']}: {r['venue']} vs {r['opponent']} — {r['score']} ({r['result']})")
-    return "\n".join(lines)
-
-def _find_last_weekend_fixture(team_id: int) -> Optional[Dict[str, Any]]:
-    for d in _recent_weekend_dates():
-        rows = af.team_fixtures_on_date(team_id, d, league_id=39)
-        if rows:
-            # if multiple, take the one with later kickoff time
-            rows.sort(key=lambda x: (x.get("fixture") or {}).get("date",""))
-            return rows[-1]
-    return None
+        log_err("API-Football fixtures failed", error=str(e), league=league)
+        return [], False
 
 def _team_last_match_summary(team: str, when_hint: str = "") -> str:
-    if not os.getenv("API_FOOTBALL_KEY"):
-        return "API-Football key not configured. Set API_FOOTBALL_KEY to enable last-match stats."
-    tid = af.resolve_team_id(team, league_id=39)
+    tid = af.resolve_team_id(team)
     if not tid:
-        return f"I couldn't resolve the team '{team}'."
+        return f"Sorry, mate, couldn’t find {team}. Try another? 😎"
+    last = af.team_form_last_n(tid, n=1, league_id=39)
+    if not last or not isinstance(last, list) or len(last) == 0:
+        log_err("No recent matches for team", team=team)
+        return f"No recent matches found for {team}, pal. Maybe their season’s just kicking off? Wanna check their next game? ⚽"
+    fx = last[0]
+    prompt = f"""
+    Do a deep search on web/X for details (e.g., corners, cards, injuries) from {team}’s last EPL match: {json.dumps(fx)}. Analyze the stats and give a friendly summary.
+    Keep it short, fun, emojis, and ask a follow-up.
+    """
+    return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
 
-    fx = None
-    q = when_hint.lower()
-    if "last weekend" in q:
-        fx = _find_last_weekend_fixture(tid)
-    elif any(w in q for w in ["yesterday","last night","lastnight"]):
-        y = timezone.localtime() - timedelta(days=1)
-        rows = af.team_fixtures_on_date(tid, y.date().isoformat(), league_id=39)
-        fx = rows[0] if rows else None
-    if not fx:
-        fx = af.team_last_fixture(tid, league_id=39)
-    if not fx:
-        return "I couldn't find a recent match for that team."
+def _preview_this_weekend_for_team(team: str) -> str:
+    tid = af.resolve_team_id(team)
+    if not tid:
+        return f"Whoops, couldn’t find {team}. Another team? 😊"
+    now, end = _next_window(8)
+    sd, ed = now.date().isoformat(), end.date().isoformat()
+    rows, ok = sm_try_fixtures("epl", sd, ed)
+    if not ok or not rows:
+        rows, ok = af_fixtures("epl", sd, ed)
+    if not ok or not rows:
+        prompt = f"""
+        Do a deep search on web/X for {team}’s next EPL match between {sd} and {ed}. Predict outcome, corners, cards, fouls if found.
+        Keep it short, fun, emojis, ask a question.
+        """
+        return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    for fx in rows:
+        t = fx.get("teams") or {}
+        h = (t.get("home") or {}).get("name")
+        a = (t.get("away") or {}).get("name")
+        if h == team or a == team:
+            prompt = f"""
+            Do a deep search on web/X for injuries, form, news on {team}’s next EPL match: {json.dumps(fx)}. Predict outcome, corners, cards, fouls using API stats and search data.
+            Keep it short, fun, emojis, ask a question.
+            """
+            return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    return f"No EPL matches for {team} soon, mate. Check their last game? ⚽"
 
-    f = fx.get("fixture", {})
-    t = fx.get("teams", {})
-    home = t.get("home") or {}; away = t.get("away") or {}
-    score_ft = (fx.get("score") or {}).get("fulltime") or {}
-    h, a = score_ft.get("home"), score_ft.get("away")
-    when = (f.get("date","")[:16]).replace("T"," ")
-    fid = f.get("id")
+def _match_explainer(home: str, away: str, league: str, detailed: bool = False) -> str:
+    h_id, a_id = af.resolve_team_id(home), af.resolve_team_id(away)
+    if not (h_id and a_id):
+        return f"Sorry, mate, couldn’t find {home} or {away}. Try again? 😅"
+    stats = af.get_head_to_head(h_id, a_id)
+    prompt = f"""
+    Do a deep search on web/X for news, injuries, form on {home} vs {away} in {league}. Use stats: {json.dumps(stats)}. Analyze and predict outcome, corners, cards, fouls.
+    Be fun, use emojis, give confidence %, ask a follow-up.
+    {"Explain in detail" if detailed else "Keep it snappy"}
+    """
+    return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
 
-    stats = af.fixture_stats_both(fid) if fid else {}
-    s_home = stats.get(home.get("id"), {}); s_away = stats.get(away.get("id"), {})
-
-    lines = [f"{home.get('name')} {h}–{a} {away.get('name')} ({when})"]
-    if not s_home and not s_away:
-        lines.append("ℹ️ No stat feed for corners/cards/fouls on this fixture; showing result only.")
-    else:
-        def g(d: dict, k: str) -> int: return int(d.get(k, 0) or 0)
-        corners = (g(s_home, "corner kicks"), g(s_away, "corner kicks"))
-        yc = (g(s_home, "yellow cards"), g(s_away, "yellow cards"))
-        rc = (g(s_home, "red cards"), g(s_away, "red cards"))
-        fouls = (g(s_home, "fouls"), g(s_away, "fouls"))
-        lines.append(f"Corners: {corners[0]}–{corners[1]}  |  Cards: Y {yc[0]}–{yc[1]}, R {rc[0]}–{rc[1]}  |  Fouls: {fouls[0]}–{fouls[1]}")
-
-    lines.append(_fmt_last_n_rows(tid, n=5))
-    return "\n".join(lines)
-
-def _match_explainer(home, away, league_slug: str):
-    # EPL-only scope guard
-    if league_slug != "epl":
-        return "I currently cover the English Premier League only."
-
-    model = _model_for_pair(home, away, league_slug)
-    if not model:
-        return "I couldn’t fetch data for that matchup right now."
-
-    # Form context
-    tidH, _ = _team_id_any(home, "epl")
-    tidA, _ = _team_id_any(away, "epl")
-    fH = af.team_form_last_n(tidH, n=5, league_id=39) if tidH else {"form": "", "win_rate": 0}
-    fA = af.team_form_last_n(tidA, n=5, league_id=39) if tidA else {"form": "", "win_rate": 0}
-
-    # Injuries (top 2 names each if available)
-    inj_lines = []
-    try:
-        injH = (af.get_injuries(tidH).get("response") if tidH else []) or []
-        injA = (af.get_injuries(tidA).get("response") if tidA else []) or []
-        if injH:
-            names = [i.get("player", {}).get("name") for i in injH if i.get("player", {}).get("name")]
-            if names: inj_lines.append(f"🩹 {home}: " + ", ".join(names[:2]))
-        if injA:
-            names = [i.get("player", {}).get("name") for i in injA if i.get("player", {}).get("name")]
-            if names: inj_lines.append(f"🩹 {away}: " + ", ".join(names[:2]))
-    except Exception:
-        pass
-
-    props = [
-        ("Over 0.5 Goals", model["over05"]),
-        ("Over 1.5 Goals", model["over15"]),
-        ("Over 2.5 Goals", model["over25"]),
-    ]
-    pick, conf = "Over 1.5 Goals", model["over15"]
-    if model["over25"] >= 58: pick, conf = "Over 2.5 Goals", model["over25"]
-    elif model["over05"] >= 90: pick, conf = "Over 0.5 Goals", model["over05"]
-
-    news_lines = []
-    for team in (home, away):
-        ns = get_team_headlines(team, limit=2)
-        if ns:
-            news_lines.append(f"🗞️ {team} news:\n" + "\n".join(ns))
-
-    lines = [f"### {home} vs {away} — Analyst Note", ""]
-    lines.append("#### 🔐 Best Props (model)")
-    for name, pct in props:
-        lines.append(f"- {name} — **{pct}%**")
-    lines.append("")
-    lines.append("#### 🧾 Final Bet")
-    lines.append(f"- **{pick}** — Confidence: **{conf}%**")
-    lines.append("")
-    lines.append("#### 💡 Why")
-    lines.append(f"- Recent form: {home} **{fH.get('form','')}** ({fH.get('win_rate',0)}%) vs {away} **{fA.get('form','')}** ({fA.get('win_rate',0)}%).")
-    lines.append("- Goals averages and concession rates support a totals angle (2+ goals most likely).")
-    lines.append("- Market shape suggests fair value on goals rather than 1X2.")
-    if inj_lines:
-        lines.append("- Key availability watch:\n  " + "\n  ".join(inj_lines))
-    if news_lines:
-        lines.append("")
-        lines.extend(news_lines)
-    return "\n".join(lines)
-
-@method_decorator(csrf_exempt, name='dispatch')
+# ---------- REST endpoints ----------
+@method_decorator(csrf_exempt, name="dispatch")
 class AskAssistant(APIView):
     def post(self, request):
-        user_text = (request.data.get("question") or "").strip()
-        if not user_text:
-            return Response({"response": "⚠️ Please type a message."})
+        session_key = request.session.session_key or request.session.create()
+        context, _ = UserContext.objects.get_or_create(
+            session_key=session_key, defaults={"chat_history": [], "recent_leagues": "epl"}
+        )
+        history = context.chat_history[-10:]  # Last 10 turns
+        user_text = request.data.get("question", "").strip()
         ql = user_text.lower()
 
-        # Fixtures list
-        if any(k in ql for k in ["fixtures","what games","who is playing","schedule","this weekend","opening weekend"]):
+        # Save user question
+        history.append({"role": "user", "content": user_text})
+
+        # 0a) Set favorite team
+        m = re.search(r"my team is ([a-z\s]+)", ql, re.IGNORECASE)
+        if m:
+            team = _resolve_team(m.group(1))
+            if team:
+                _set_profile(request, fav_team=team)
+                context.recent_leagues = "epl"
+                context.save()
+                reply = f"Got it, {team}’s your squad! 🙌 Ask me anything about ‘em. What’s up?"
+                history.append({"role": "assistant", "content": reply})
+                context.chat_history = history[-10:]
+                context.save()
+                return Response({"response": reply})
+
+        # 0b) Replace 'we' with favorite team
+        prof = _get_profile(request)
+        fav = prof.get("fav_team")
+        if fav:
+            ql = re.sub(r"\bwe\b", fav.lower(), ql)
+
+        # 1) Analysis/preview for last matchup or chip-based (e.g., "Vs Arsenal")
+        if any(k in ql for k in ["explain", "analysis", "preview", "vs arsenal"]):
+            h_prev, a_prev = _get_last_matchup(request)
+            if "vs" in ql.lower():
+                h, a = _extract_teams(ql)
+                if h and a:
+                    _set_last_matchup(request, h, a)
+                    reply = _match_explainer(h, a, "epl", detailed=True)
+                    history.append({"role": "assistant", "content": reply})
+                    context.chat_history = history[-10:]
+                    context.save()
+                    return Response({"response": reply})
+            if h_prev and a_prev:
+                reply = _match_explainer(h_prev, a_prev, "epl", detailed=True)
+                history.append({"role": "assistant", "content": reply})
+                context.chat_history = history[-10:]
+                context.save()
+                return Response({"response": reply})
+
+        # 2) Explicit matchup
+        h, a = _extract_teams(ql)
+        if h and a:
+            _set_last_matchup(request, h, a)
+            reply = _match_explainer(h, a, "epl", detailed="detail" in ql)
+            history.append({"role": "assistant", "content": reply})
+            context.chat_history = history[-10:]
+            context.save()
+            return Response({"response": reply})
+
+        # 3) Team + next match
+        if any(k in ql for k in ["weekend", "this weekend", "next match", "next game", "who do", "who's next"]):
+            team = _guess_team(ql) or fav
+            if team:
+                reply = _preview_this_weekend_for_team(team)
+                if reply:
+                    hh, aa = _extract_teams(reply)
+                    if hh and aa: _set_last_matchup(request, hh, aa)
+                    history.append({"role": "assistant", "content": reply})
+                    context.chat_history = history[-10:]
+                    context.save()
+                    return Response({"response": reply})
+
+        # 4) Single-team last match + stats
+        if any(w in ql for w in ["last weekend","last match","yesterday","last night","result","score","corners","cards","fouls"]):
+            team = _guess_team(ql) or fav
+            if team:
+                reply = _team_last_match_summary(team, ql)
+                history.append({"role": "assistant", "content": reply})
+                context.chat_history = history[-10:]
+                context.save()
+                return Response({"response": reply})
+
+        # 5) General fixtures
+        if any(k in ql for k in ["fixtures","what games","who is playing","schedule","this weekend"]):
             now, end = _next_window(8)
-            sd = now.date().isoformat(); ed = end.date().isoformat()
+            sd, ed = now.date().isoformat(), end.date().isoformat()
             def pack(rows, title):
                 if not rows: return f"📅 {title} fixtures (next 8 days): none found."
                 lines = [f"📅 {title} fixtures (next 8 days):"]
                 for fx in rows[:24]:
                     dt = (fx.get("fixture") or {}).get("date","")
-                    t  = fx.get("teams") or {}
-                    h  = (t.get("home") or {}).get("name","")
-                    a  = (t.get("away") or {}).get("name","")
+                    t = (fx.get("teams") or {})
+                    h = (t.get("home") or {}).get("name","")
+                    a = (t.get("away") or {}).get("name","")
                     if h and a: lines.append(f"- {str(dt)[:16].replace('T',' ')}: {h} vs {a}")
                 return "\n".join(lines)
-            e_rows, _ = sm_try_fixtures("epl", sd, ed); 
+            e_rows, _ = sm_try_fixtures("epl", sd, ed)
             if not e_rows: e_rows, _ = af_fixtures("epl", sd, ed)
-            l_rows, _ = sm_try_fixtures("laliga", sd, ed); 
+            l_rows, _ = sm_try_fixtures("laliga", sd, ed)
             if not l_rows: l_rows, _ = af_fixtures("laliga", sd, ed)
-            reply = pack(e_rows, "EPL") + "\n\n" + pack(l_rows, "La Liga")
+            reply = pack(e_rows, "EPL") + "\n\n" + pack(l_rows, "La Liga") + "\n\nWhat match you hyped for, mate? 😎"
+            history.append({"role": "assistant", "content": reply})
+            context.chat_history = history[-10:]
+            context.save()
             return Response({"response": reply})
 
-        # Best bets
+        # 6) Best bets
         if "best bets" in ql or "value board" in ql:
             req = request._request; req.GET = req.GET.copy(); req.GET["league"] = "epl"
             data = json.loads(api_best_bets(req).content.decode("utf-8"))
             if not data.get("results"):
-                return Response({"response": "📋 No strong model edges found right now."})
-            lines = ["📋 Weekend Value Board — model-only edges"]
-            for r in data["results"]:
-                lines.append(f"- {r['match']}: {r['market']} (model {r['model_p']}%)")
-            return Response({"response": "\n".join(lines)})
+                reply = "📋 No hot bets right now, pal. Wanna try a random pick? 😎"
+            else:
+                prompt = f"""
+                Do a deep search on web/X for extra context (e.g., injuries, form) on EPL best bets: {json.dumps(data['results'])}.
+                Keep it fun, emojis, ask a follow-up.
+                """
+                reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+            history.append({"role": "assistant", "content": reply})
+            context.chat_history = history[-10:]
+            context.save()
+            return Response({"response": reply})
 
-        # Random pick / banker
+        # 7) Random pick / banker
         if "random" in ql or "banker" in ql or "small odds" in ql:
             req = request._request; req.GET = req.GET.copy(); req.GET["league"] = "epl"
             r = json.loads(api_random_pick(req).content.decode("utf-8"))
             if not r.get("ok"):
-                return Response({"response": "I couldn’t fetch data for that matchup right now."})
-            text = (f"🎲 **Random pick** — {r['match']}\n\n"
-                    f"🔐 **Best Props (model)**\n"
-                    f"- Over 0.5 Goals — **{r['props']['over05']}%**\n"
-                    f"- Over 1.5 Goals — **{r['props']['over15']}%**\n"
-                    f"- Over 2.5 Goals — **{r['props']['over25']}%**\n\n"
-                    f"🧾 **Final Bet**\n- {r['final_pick']['market']} — Confidence: **{r['final_pick']['confidence']}%**")
-            return Response({"response": text})
+                reply = "Couldn’t grab a pick, mate. Another try? 😅"
+            else:
+                prompt = f"""
+                Do a deep search on web/X for match context (e.g., news, form) on this EPL pick: {json.dumps(r)}.
+                Keep it short, fun, emojis, ask a follow-up.
+                """
+                reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+            history.append({"role": "assistant", "content": reply})
+            context.chat_history = history[-10:]
+            context.save()
+            return Response({"response": reply})
 
-        # Single-team realtime Qs (now includes 'last weekend')
-        if any(w in ql for w in ["last weekend","last match","yesterday","last night","lastnight","result","score","what did","corners","cards","fouls"]):
-            team = _guess_team(user_text)
+        # 8) Non-EPL sports or general questions
+        sports = {"nba": "basketball", "nfl": "football", "cricket": "cricket", "tennis": "tennis"}
+        sport = next((v for k, v in sports.items() if k in ql), None)
+        if sport:
+            prompt = f"""
+            Do a deep search on web/X for recent {sport} updates on: {user_text}. Use context: {context.recent_leagues or 'EPL'}. Be fun, emojis, ask a follow-up.
+            """
+            reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+            history.append({"role": "assistant", "content": reply})
+            context.chat_history = history[-10:]
+            context.save()
+            return Response({"response": reply})
+
+        # 9) Fallback with context (e.g., "latest on Liverpool" + prediction)
+        if any(k in ql for k in ["latest", "update", "news"]) and "predict" in ql:
+            team = _guess_team(ql) or fav
             if team:
-                return Response({"response": _team_last_match_summary(team, when_hint=ql)})
+                last_summary = _team_last_match_summary(team)
+                next_preview = _preview_this_weekend_for_team(team)
+                if "No recent matches" in last_summary:
+                    last_summary = "No recent match data, pal—season’s just kicking off maybe! ⚽"
+                if "No EPL matches" in next_preview:
+                    next_preview = _preview_this_weekend_for_team(team)  # Retry with deep search
+                reply = f"{last_summary}\n\n{next_preview}"
+                history.append({"role": "assistant", "content": reply})
+                context.chat_history = history[-10:]
+                context.save()
+                return Response({"response": reply})
 
-        # Explicit matchup (EPL only)
-        h, a = _extract_teams(user_text)
-        if h and a:
-            return Response({"response": _match_explainer(h, a, "epl")})
+        # 10) Fallback with context
+        prompt = f"""
+        Do a deep search on web/X to get accurate data for: {user_text}.
+        """
+        reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}] + history + [{"role": "user", "content": prompt}])
+        history.append({"role": "assistant", "content": reply})
+        context.chat_history = history[-10:]
+        context.save()
+        if fav:
+            return Response({"response": f"{reply}\n\nYo, {fav} fan! Got a match or stat you wanna dive into? 😎"})
+        return Response({"response": f"{reply}\n\nYo! Tell me a match or say ‘my team is Arsenal’! 😎"})
 
-        # Fallback: plain LLM (still EPL-oriented instructions)
-        if OPENAI_OK:
-            messages = [{"role":"system","content": MIKE_SYSTEM},
-                        {"role":"user","content": user_text}]
-            txt = _ask_llm(messages)
-            if txt:
-                return Response({"response": txt})
+# ---------- Other endpoints ----------
+def api_fixtures(request):
+    league = request.GET.get("league", "epl").lower()
+    now, end = _next_window(8)
+    sd, ed = now.date().isoformat(), end.date().isoformat()
+    rows, ok = sm_try_fixtures(league, sd, ed)
+    if not ok: rows, ok = af_fixtures(league, sd, ed)
+    return JsonResponse({"league": league, "fixtures": rows})
 
-        return Response({"response": "Ask for EPL fixtures, a random pick, best bets, a specific match (e.g., “Liverpool vs Bournemouth”), or a team’s last match (e.g., “What did Arsenal play last weekend?”)."})
+def api_random_pick(request):
+    # Mocked; enhance with Grok later
+    return JsonResponse({
+        "ok": True,
+        "match": "Arsenal vs Tottenham",
+        "props": {"over05": 95, "over15": 80, "over25": 60},
+        "final_pick": {"market": "Over 1.5 Goals", "confidence": 80}
+    })
+
+def api_best_bets(request):
+    # Mocked; enhance with Grok later
+    return JsonResponse({
+        "results": [
+            {"match": "Man Utd vs Liverpool", "market": "Over 2.5 Goals", "model_p": 65},
+            {"match": "Chelsea vs Arsenal", "market": "BTTS", "model_p": 70}
+        ]
+    })
+
+def api_team_last5(request, name):
+    tid = af.resolve_team_id(name)
+    if not tid:
+        return JsonResponse({"error": f"Team {name} not found"})
+    matches = af.team_form_last_n(tid, n=5)
+    if not matches:
+        log_err("No last 5 matches for team", team=name)
+        return JsonResponse({"matches": [], "message": f"No recent matches for {name}"})
+    return JsonResponse({"matches": matches})
+
+def api_team_last10(request, name):
+    tid = af.resolve_team_id(name)
+    if not tid:
+        return JsonResponse({"error": f"Team {name} not found"})
+    matches = af.team_form_last_n(tid, n=10)
+    if not matches:
+        log_err("No last 10 matches for team", team=name)
+        return JsonResponse({"matches": [], "message": f"No recent matches for {name}"})
+    return JsonResponse({"matches": matches})
+
+def api_team_news(request, name):
+    team = _resolve_team(name)
+    prompt = f"""
+    Do a deep search on web/X for injuries, transfers, fan buzz on {team} in the EPL.
+    Summarize in a friendly way, use emojis, ask a follow-up.
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    return JsonResponse({"team": team, "news": reply})
+
+def api_team_summary(request, name):
+    tid = af.resolve_team_id(name)
+    if not tid:
+        return JsonResponse({"error": f"Team {name} not found"})
+    stats = af.get_team_stats(tid)
+    if not stats:
+        log_err("No stats for team", team=name)
+        prompt = f"""
+        Do a deep search on web/X for form, key players, news on {name}’s EPL season.
+        Summarize in a friendly way, use emojis, ask a question.
+        """
+    else:
+        prompt = f"""
+        Do a deep search on web/X for form, key players, news on {name}’s EPL season: {json.dumps(stats)}.
+        Analyze and summarize in a friendly way, use emojis, ask a question.
+        """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    return JsonResponse({"team": name, "summary": reply})
+
+def health(request):
+    return JsonResponse({"status": "ok"})
+
+def me(request):
+    prof = _get_profile(request)
+    return JsonResponse({"profile": prof})
