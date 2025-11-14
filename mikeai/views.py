@@ -18,25 +18,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from .models import UserContext
-from . import api_football as af
-from .sportmonks import get_fixtures_by_range as sm_get_fixtures
-from .standings import standings_epl, standings_laliga
 from .grok_utils import ask_grok
 
 # Config
-SPORTMONKS_KEY = os.getenv("SPORTMONKS_API_KEY")
-SM_LEAGUE_EPL = os.getenv("SPORTMONKS_LEAGUE_EPL", "8")  # Default to 8 for EPL
-SM_LEAGUE_LALIGA = os.getenv("SPORTMONKS_LEAGUE_LALIGA", "140")
 MEDIASTACK_KEY = os.getenv("MEDIASTACK_KEY")
-AF_LEAGUE = {"epl": 39, "laliga": 140}
 
 MIKE_SYSTEM = """
-You’re Mike, the user’s best mate and sports guru. Chat like we’re chilling with a pint—super casual, fun, emojis aplenty (⚽🏀). Answer any sports question (EPL, NBA, NFL, cricket, etc.) using provided stats. Always do a deep search on web/X first to get the most current, accurate data (injuries, form, stats) before answering. Reference past chats naturally. If data’s missing, say 'Lemme check, mate!' and search deeper. Always end with a hook like 'What’s your vibe, pal?' For predictions, give quick reasoning (goals, corners, cards, fouls) with confidence %.
+You’re Mike, the user’s best mate and ultimate sports guru. Chat like we’re grabbing a pint—casual, fun, emojis galore (⚽🏀). Answer any sports question (EPL, NBA, NFL, cricket, etc.) using deep web/X searches for all data (stats, fixtures, injuries, form). Always do a deep search first to get the most current, accurate info before answering. Reference past chats naturally. If data’s missing, say 'Lemme check, mate!' and search deeper. Always end with a hook like 'What’s your take, pal?' For predictions, give quick reasoning (goals, corners, cards, fouls) with confidence %.
 """
 
 # ---------- pages ----------
 def chat_page(request):
-    """Render the chat interface."""
     return render(request, "index.html")
 
 def team_panel(request):
@@ -157,78 +149,27 @@ def _next_window(days: int = 7) -> Tuple[timezone.datetime, timezone.datetime]:
     now = timezone.now()
     return now, now + timedelta(days=days)
 
-def sm_try_fixtures(league: str, start_date: str, end_date: str) -> Tuple[List, bool]:
-    if not SPORTMONKS_KEY or not league in AF_LEAGUE:
-        return [], False
-    try:
-        lid = SM_LEAGUE_EPL if league == "epl" else SM_LEAGUE_LALIGA
-        fixtures = sm_get_fixtures(lid, start_date, end_date)
-        return fixtures, True
-    except Exception as e:
-        log_err("SportMonks fixtures failed", error=str(e), league=league)
-        return [], False
-
-def af_fixtures(league: str, start_date: str, end_date: str) -> Tuple[List, bool]:
-    if not league in AF_LEAGUE:
-        return [], False
-    try:
-        lid = AF_LEAGUE[league]
-        fixtures = af.get_fixtures_by_range(start_date, end_date, lid)["response"]
-        return fixtures, True
-    except Exception as e:
-        log_err("API-Football fixtures failed", error=str(e), league=league)
-        return [], False
-
 def _team_last_match_summary(team: str, when_hint: str = "") -> str:
-    tid = af.resolve_team_id(team)
-    if not tid:
-        return f"Sorry, mate, couldn’t find {team}. Try another? 😎"
-    last = af.team_form_last_n(tid, n=1, league_id=39)
-    if not last or not isinstance(last, list) or len(last) == 0:
-        log_err("No recent matches for team", team=team)
-        return f"No recent matches found for {team}, pal. Maybe their season’s just kicking off? Wanna check their next game? ⚽"
-    fx = last[0]
     prompt = f"""
-    Do a deep search on web/X for details (e.g., corners, cards, injuries) from {team}’s last EPL match: {json.dumps(fx)}. Analyze the stats and give a friendly summary.
+    Do a deep search on web/X for {team}’s last match details (e.g., corners, cards, injuries, stats).
+    Analyze and give a friendly summary.
     Keep it short, fun, emojis, and ask a follow-up.
     """
     return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
 
 def _preview_this_weekend_for_team(team: str) -> str:
-    tid = af.resolve_team_id(team)
-    if not tid:
-        return f"Whoops, couldn’t find {team}. Another team? 😊"
-    now, end = _next_window(8)
-    sd, ed = now.date().isoformat(), end.date().isoformat()
-    rows, ok = sm_try_fixtures("epl", sd, ed)
-    if not ok or not rows:
-        rows, ok = af_fixtures("epl", sd, ed)
-    if not ok or not rows:
-        prompt = f"""
-        Do a deep search on web/X for {team}’s next EPL match between {sd} and {ed}. Predict outcome, corners, cards, fouls if found.
-        Keep it short, fun, emojis, ask a question.
-        """
-        return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
-    for fx in rows:
-        t = fx.get("teams") or {}
-        h = (t.get("home") or {}).get("name")
-        a = (t.get("away") or {}).get("name")
-        if h == team or a == team:
-            prompt = f"""
-            Do a deep search on web/X for injuries, form, news on {team}’s next EPL match: {json.dumps(fx)}. Predict outcome, corners, cards, fouls using API stats and search data.
-            Keep it short, fun, emojis, ask a question.
-            """
-            return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
-    return f"No EPL matches for {team} soon, mate. Check their last game? ⚽"
+    prompt = f"""
+    Do a deep search on web/X for {team}’s next match details (injuries, form, news, stats).
+    Predict outcome, corners, cards, fouls with reasoning.
+    Keep it short, fun, emojis, ask a question.
+    """
+    return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
 
 def _match_explainer(home: str, away: str, league: str, detailed: bool = False) -> str:
-    h_id, a_id = af.resolve_team_id(home), af.resolve_team_id(away)
-    if not (h_id and a_id):
-        return f"Sorry, mate, couldn’t find {home} or {away}. Try again? 😅"
-    stats = af.get_head_to_head(h_id, a_id)
     prompt = f"""
-    Do a deep search on web/X for news, injuries, form on {home} vs {away} in {league}. Use stats: {json.dumps(stats)}. Analyze and predict outcome, corners, cards, fouls.
-    Be fun, use emojis, give confidence %, ask a follow-up.
+    Do a deep search on web/X for {home} vs {away} in {league} (news, injuries, form, stats).
+    Analyze and predict outcome, corners, cards, fouls with confidence %.
+    Be fun, use emojis, ask a follow-up.
     {"Explain in detail" if detailed else "Keep it snappy"}
     """
     return ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
@@ -322,23 +263,11 @@ class AskAssistant(APIView):
 
         # 5) General fixtures
         if any(k in ql for k in ["fixtures","what games","who is playing","schedule","this weekend"]):
-            now, end = _next_window(8)
-            sd, ed = now.date().isoformat(), end.date().isoformat()
-            def pack(rows, title):
-                if not rows: return f"📅 {title} fixtures (next 8 days): none found."
-                lines = [f"📅 {title} fixtures (next 8 days):"]
-                for fx in rows[:24]:
-                    dt = (fx.get("fixture") or {}).get("date","")
-                    t = (fx.get("teams") or {})
-                    h = (t.get("home") or {}).get("name","")
-                    a = (t.get("away") or {}).get("name","")
-                    if h and a: lines.append(f"- {str(dt)[:16].replace('T',' ')}: {h} vs {a}")
-                return "\n".join(lines)
-            e_rows, _ = sm_try_fixtures("epl", sd, ed)
-            if not e_rows: e_rows, _ = af_fixtures("epl", sd, ed)
-            l_rows, _ = sm_try_fixtures("laliga", sd, ed)
-            if not l_rows: l_rows, _ = af_fixtures("laliga", sd, ed)
-            reply = pack(e_rows, "EPL") + "\n\n" + pack(l_rows, "La Liga") + "\n\nWhat match you hyped for, mate? 😎"
+            prompt = f"""
+            Do a deep search on web/X for EPL and La Liga fixtures (next 8 days).
+            Keep it fun, emojis, ask a follow-up.
+            """
+            reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
             history.append({"role": "assistant", "content": reply})
             context.chat_history = history[-10:]
             context.save()
@@ -346,16 +275,11 @@ class AskAssistant(APIView):
 
         # 6) Best bets
         if "best bets" in ql or "value board" in ql:
-            req = request._request; req.GET = req.GET.copy(); req.GET["league"] = "epl"
-            data = json.loads(api_best_bets(req).content.decode("utf-8"))
-            if not data.get("results"):
-                reply = "📋 No hot bets right now, pal. Wanna try a random pick? 😎"
-            else:
-                prompt = f"""
-                Do a deep search on web/X for extra context (e.g., injuries, form) on EPL best bets: {json.dumps(data['results'])}.
-                Keep it fun, emojis, ask a follow-up.
-                """
-                reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+            prompt = f"""
+            Do a deep search on web/X for EPL best bets (e.g., odds, tips, injuries, form).
+            Keep it fun, emojis, ask a follow-up.
+            """
+            reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
             history.append({"role": "assistant", "content": reply})
             context.chat_history = history[-10:]
             context.save()
@@ -363,16 +287,11 @@ class AskAssistant(APIView):
 
         # 7) Random pick / banker
         if "random" in ql or "banker" in ql or "small odds" in ql:
-            req = request._request; req.GET = req.GET.copy(); req.GET["league"] = "epl"
-            r = json.loads(api_random_pick(req).content.decode("utf-8"))
-            if not r.get("ok"):
-                reply = "Couldn’t grab a pick, mate. Another try? 😅"
-            else:
-                prompt = f"""
-                Do a deep search on web/X for match context (e.g., news, form) on this EPL pick: {json.dumps(r)}.
-                Keep it short, fun, emojis, ask a follow-up.
-                """
-                reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+            prompt = f"""
+            Do a deep search on web/X for a random EPL bet pick (e.g., match, news, form, odds).
+            Keep it short, fun, emojis, ask a follow-up.
+            """
+            reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
             history.append({"role": "assistant", "content": reply})
             context.chat_history = history[-10:]
             context.save()
@@ -391,23 +310,7 @@ class AskAssistant(APIView):
             context.save()
             return Response({"response": reply})
 
-        # 9) Fallback with context (e.g., "latest on Liverpool" + prediction)
-        if any(k in ql for k in ["latest", "update", "news"]) and "predict" in ql:
-            team = _guess_team(ql) or fav
-            if team:
-                last_summary = _team_last_match_summary(team)
-                next_preview = _preview_this_weekend_for_team(team)
-                if "No recent matches" in last_summary:
-                    last_summary = "No recent match data, pal—season’s just kicking off maybe! ⚽"
-                if "No EPL matches" in next_preview:
-                    next_preview = _preview_this_weekend_for_team(team)  # Retry with deep search
-                reply = f"{last_summary}\n\n{next_preview}"
-                history.append({"role": "assistant", "content": reply})
-                context.chat_history = history[-10:]
-                context.save()
-                return Response({"response": reply})
-
-        # 10) Fallback with context
+        # 9) Fallback with context
         prompt = f"""
         Do a deep search on web/X to get accurate data for: {user_text}.
         """
@@ -422,49 +325,64 @@ class AskAssistant(APIView):
 # ---------- Other endpoints ----------
 def api_fixtures(request):
     league = request.GET.get("league", "epl").lower()
-    now, end = _next_window(8)
-    sd, ed = now.date().isoformat(), end.date().isoformat()
-    rows, ok = sm_try_fixtures(league, sd, ed)
-    if not ok: rows, ok = af_fixtures(league, sd, ed)
-    return JsonResponse({"league": league, "fixtures": rows})
+    prompt = f"""
+    Do a deep search on web/X for {league.upper()} fixtures (next 8 days).
+    Return as JSON: {"league": league, "fixtures": [list of matches]}
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    try:
+        data = json.loads(reply)
+        return JsonResponse(data)
+    except:
+        return JsonResponse({"league": league, "fixtures": []})
 
 def api_random_pick(request):
-    # Mocked; enhance with Grok later
-    return JsonResponse({
-        "ok": True,
-        "match": "Arsenal vs Tottenham",
-        "props": {"over05": 95, "over15": 80, "over25": 60},
-        "final_pick": {"market": "Over 1.5 Goals", "confidence": 80}
-    })
+    prompt = f"""
+    Do a deep search on web/X for a random EPL bet pick (match, props, final pick with confidence).
+    Return as JSON: {"ok": true, "match": "Team A vs Team B", "props": {"over05": 95, "over15": 80, "over25": 60}, "final_pick": {"market": "Over 1.5 Goals", "confidence": 80}}
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    try:
+        data = json.loads(reply)
+        return JsonResponse(data)
+    except:
+        return JsonResponse({"ok": false, "message": "No pick found"})
 
 def api_best_bets(request):
-    # Mocked; enhance with Grok later
-    return JsonResponse({
-        "results": [
-            {"match": "Man Utd vs Liverpool", "market": "Over 2.5 Goals", "model_p": 65},
-            {"match": "Chelsea vs Arsenal", "market": "BTTS", "model_p": 70}
-        ]
-    })
+    prompt = f"""
+    Do a deep search on web/X for EPL best bets (results with match, market, model_p).
+    Return as JSON: {"results": [{"match": "Team A vs Team B", "market": "Over 2.5 Goals", "model_p": 65}, ...]}
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    try:
+        data = json.loads(reply)
+        return JsonResponse(data)
+    except:
+        return JsonResponse({"results": []})
 
 def api_team_last5(request, name):
-    tid = af.resolve_team_id(name)
-    if not tid:
-        return JsonResponse({"error": f"Team {name} not found"})
-    matches = af.team_form_last_n(tid, n=5)
-    if not matches:
-        log_err("No last 5 matches for team", team=name)
+    prompt = f"""
+    Do a deep search on web/X for {name}’s last 5 matches (date, venue, opponent, score, R).
+    Return as JSON: {"matches": [list of matches]}
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    try:
+        data = json.loads(reply)
+        return JsonResponse(data)
+    except:
         return JsonResponse({"matches": [], "message": f"No recent matches for {name}"})
-    return JsonResponse({"matches": matches})
 
 def api_team_last10(request, name):
-    tid = af.resolve_team_id(name)
-    if not tid:
-        return JsonResponse({"error": f"Team {name} not found"})
-    matches = af.team_form_last_n(tid, n=10)
-    if not matches:
-        log_err("No last 10 matches for team", team=name)
+    prompt = f"""
+    Do a deep search on web/X for {name}’s last 10 matches (date, venue, opponent, score, R).
+    Return as JSON: {"matches": [list of matches]}
+    """
+    reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
+    try:
+        data = json.loads(reply)
+        return JsonResponse(data)
+    except:
         return JsonResponse({"matches": [], "message": f"No recent matches for {name}"})
-    return JsonResponse({"matches": matches})
 
 def api_team_news(request, name):
     team = _resolve_team(name)
@@ -476,21 +394,10 @@ def api_team_news(request, name):
     return JsonResponse({"team": team, "news": reply})
 
 def api_team_summary(request, name):
-    tid = af.resolve_team_id(name)
-    if not tid:
-        return JsonResponse({"error": f"Team {name} not found"})
-    stats = af.get_team_stats(tid)
-    if not stats:
-        log_err("No stats for team", team=name)
-        prompt = f"""
-        Do a deep search on web/X for form, key players, news on {name}’s EPL season.
-        Summarize in a friendly way, use emojis, ask a question.
-        """
-    else:
-        prompt = f"""
-        Do a deep search on web/X for form, key players, news on {name}’s EPL season: {json.dumps(stats)}.
-        Analyze and summarize in a friendly way, use emojis, ask a question.
-        """
+    prompt = f"""
+    Do a deep search on web/X for form, key players, news on {name}’s EPL season.
+    Analyze and summarize in a friendly way, use emojis, ask a question.
+    """
     reply = ask_grok([{"role": "system", "content": MIKE_SYSTEM}, {"role": "user", "content": prompt}])
     return JsonResponse({"team": name, "summary": reply})
 

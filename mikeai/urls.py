@@ -20,8 +20,8 @@ urlpatterns = [
     path('api/team/<str:name>/summary', views.api_team_summary, name='api_team_summary'),
 
     # Standings for index.html
-    path('standings/epl', views.standings_epl, name='standings_epl'),
-    path('standings/laliga', views.standings_laliga, name='standings_laliga'),
+    # path('standings/epl', views.standings_epl, name='standings_epl'),
+    # path('standings/laliga', views.standings_laliga, name='standings_laliga'),
 
     path('health', views.health, name='health'),
 ]
